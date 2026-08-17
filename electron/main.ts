@@ -41,7 +41,7 @@ function simulateKeyPress(keys: string): Promise<void> {
   });
 }
 
-// 1. SINGLE EXPANDING WIDGET WINDOW (Dot 48x48 <---> Features Menu 360x520)
+// 1. SINGLE EXPANDING WIDGET WINDOW (Dot 48x48 <---> Full Features Tab 360x520)
 function createWidgetWindow() {
   widgetWindow = new BrowserWindow({
     width: 48,
@@ -50,10 +50,10 @@ function createWidgetWindow() {
     frame: false,
     alwaysOnTop: true,
     skipTaskbar: true,
-    resizable: false,
+    resizable: true, // Must be true so setBounds / setSize can dynamically expand to 360x520!
     hasShadow: false,
     focusable: true,
-    show: false, // Initially hidden until typing is detected
+    show: false,     // Initially hidden until typing is detected
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -102,7 +102,7 @@ function startCaretTracker() {
 
             if (state === 'caret' && !isNaN(x) && !isNaN(y)) {
               lastCaretPos = { x, y };
-              // When in dot mode, follow the typing cursor
+              // Follow active typing insertion point when in dot mode
               if (!isMenuOpen && widgetWindow && !widgetWindow.isDestroyed()) {
                 const display = screen.getDisplayNearestPoint({ x, y });
                 const maxX = display.bounds.x + display.bounds.width - 55;
@@ -111,13 +111,18 @@ function startCaretTracker() {
                 const targetX = Math.min(Math.max(x + 10, display.bounds.x + 5), maxX);
                 const targetY = Math.min(Math.max(y + 2, display.bounds.y + 5), maxY);
 
-                widgetWindow.setPosition(targetX, targetY);
+                widgetWindow.setBounds({
+                  x: targetX,
+                  y: targetY,
+                  width: 48,
+                  height: 48,
+                });
+
                 if (!widgetWindow.isVisible()) {
                   widgetWindow.showInactive();
                 }
               }
             } else if (state === 'none') {
-              // Only hide if menu is NOT open
               if (!isMenuOpen && widgetWindow && !widgetWindow.isDestroyed() && widgetWindow.isVisible()) {
                 widgetWindow.hide();
               }
@@ -171,7 +176,7 @@ function createEditorWindow() {
   });
 }
 
-// Expand Widget into Features Menu
+// Expand Widget into Full Features Menu Tab (360x520)
 async function expandToMenu() {
   if (!widgetWindow || widgetWindow.isDestroyed()) {
     createWidgetWindow();
@@ -213,8 +218,13 @@ async function expandToMenu() {
   }
 
   if (widgetWindow && !widgetWindow.isDestroyed()) {
-    widgetWindow.setSize(menuWidth, menuHeight);
-    widgetWindow.setPosition(posX, posY);
+    // Explicitly set full 360x520 bounds on Windows
+    widgetWindow.setBounds({
+      x: posX,
+      y: posY,
+      width: menuWidth,
+      height: menuHeight,
+    });
     widgetWindow.show();
     widgetWindow.focus();
     widgetWindow.webContents.send('menu-data', {
@@ -223,11 +233,10 @@ async function expandToMenu() {
   }
 }
 
-// Collapse Widget back to Dot
+// Collapse Widget back to Dot (48x48)
 function collapseToDot() {
   isMenuOpen = false;
   if (widgetWindow && !widgetWindow.isDestroyed()) {
-    widgetWindow.setSize(48, 48);
     const display = screen.getDisplayNearestPoint(lastCaretPos);
     const maxX = display.bounds.x + display.bounds.width - 55;
     const maxY = display.bounds.y + display.bounds.height - 55;
@@ -235,7 +244,12 @@ function collapseToDot() {
     const targetX = Math.min(Math.max(lastCaretPos.x + 10, display.bounds.x + 5), maxX);
     const targetY = Math.min(Math.max(lastCaretPos.y + 2, display.bounds.y + 5), maxY);
 
-    widgetWindow.setPosition(targetX, targetY);
+    widgetWindow.setBounds({
+      x: targetX,
+      y: targetY,
+      width: 48,
+      height: 48,
+    });
   }
 }
 

@@ -183,7 +183,7 @@ export function App() {
 
     // Expanded Features Menu State
     return (
-      <div className="w-full h-full p-2 bg-transparent select-none">
+      <div className="w-screen h-screen p-2 bg-transparent select-none flex flex-col">
         <div className="w-full h-full bg-slate-900 border border-slate-700/90 rounded-2xl shadow-2xl flex flex-col overflow-hidden text-slate-100 backdrop-blur-2xl">
           {/* Header */}
           <div className="px-3.5 py-2.5 bg-slate-800/90 border-b border-slate-700/80 flex items-center justify-between">

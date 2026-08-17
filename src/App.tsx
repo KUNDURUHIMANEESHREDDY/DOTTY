@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { CaretPosition, DocumentTab, AppSettings, ActionType, ToneType, DiffResult, ToastMessage } from './types';
 import { DEFAULT_SETTINGS } from './services/defaultSettings';
 import { useLocalStorage } from './hooks/useLocalStorage';
@@ -16,27 +16,35 @@ import { SettingsModal } from './components/SettingsModal';
 import { QuickTemplatesModal } from './components/QuickTemplatesModal';
 import { StatsBar } from './components/StatsBar';
 import { ToastContainer } from './components/Toast';
-import { Edit3 } from 'lucide-react';
+import { Sparkles, Edit3, X, Check, Copy, ArrowRight, Zap } from 'lucide-react';
 
 const INITIAL_DEMO_TEXT = `# Welcome to Dotty ✦
 
-Dotty is your intelligent desktop typing assistant. As you type, notice the subtle glowing dot floating beside your cursor.
+Dotty is your intelligent desktop typing assistant.
 
 ### 🧪 Try It Out:
 
 1. **Test Grammar Correction:**
 He dont knows what their doing and he didnt recieved the email untill yesterday.
-*(Place your cursor in the sentence above and click the Dot or press Ctrl+Shift+G)*
+*(Highlight this line and click the floating Dot or press Alt+Space)*
 
 2. **Test Prompt Enhancement:**
 write a python script for scraping news headlines
-*(Highlight this line and click the Dot or press Ctrl+Shift+P)*
+*(Highlight this line and click Enhance Prompt)*
 
-3. **Explore Tone Shifts & Summaries:**
-Click the floating dot anytime to change tone, summarize, or translate.`;
+3. **Explore Plain English & Tone Shifts:**
+Click the floating dot anytime in any application (Chrome, Word, VS Code) to transform text!`;
 
 export function App() {
-  const isDedicatedEditor = window.location.hash === '#editor';
+  const [route, setRoute] = useState<string>(() => window.location.hash.replace('#', '') || 'editor');
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      setRoute(window.location.hash.replace('#', '') || 'editor');
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
 
   // 1. Settings & Persistence
   const [settings, setSettings] = useLocalStorage<AppSettings>('dotty_settings_v1', DEFAULT_SETTINGS);
@@ -59,28 +67,17 @@ export function App() {
     updatedAt: Date.now(),
   };
 
-  // 2. Editor & Undo/Redo Engine
+  // 2. Editor & Undo/Redo Engine (for #editor mode)
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const { content, pushState, undo, redo, canUndo, canRedo, resetHistory } = useUndoRedo(activeTab.content);
-
-  // 3. Local Caret Position (Editor mode)
   const { caretPosition: localCaretPosition, updateCaretPosition } = useCaretPosition(editorRef);
 
-  // 4. Global Screen Cursor Position (System-Wide Overlay mode)
-  const [globalCursorPos, setGlobalCursorPos] = useState<{ x: number; y: number }>({ x: 200, y: 200 });
-  const [externalCapturedText, setExternalCapturedText] = useState<string>('');
-
-  // Modals & Popups State
-  const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
-  const [menuPosition, setMenuPosition] = useState({ x: 200, y: 200 });
-  const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
+  // 3. Floating Menu State (for #menu mode)
+  const [capturedText, setCapturedText] = useState<string>('');
   const [currentDiff, setCurrentDiff] = useState<DiffResult | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
-
-  // Processing & Toast status
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [dotStatus, setDotStatus] = useState<'idle' | 'processing' | 'success' | 'error'>('idle');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const addToast = (type: ToastMessage['type'], title: string, description?: string) => {
@@ -95,77 +92,33 @@ export function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Notify Electron main process when menu / modal opens or closes
+  // Listen for Menu Trigger data from main process in #menu mode
   useEffect(() => {
-    if (window.electronAPI && !isDedicatedEditor) {
-      const anyPopupOpen = isActionMenuOpen || isDiffModalOpen || isSettingsOpen || isTemplatesOpen;
-      window.electronAPI.setMenuOpen(anyPopupOpen);
-    }
-  }, [isActionMenuOpen, isDiffModalOpen, isSettingsOpen, isTemplatesOpen, isDedicatedEditor]);
-
-  // Subscribe to global cursor move events from Electron
-  useEffect(() => {
-    if (window.electronAPI && !isDedicatedEditor) {
-      const unsubscribeCursor = window.electronAPI.onGlobalCursorMove((pt) => {
-        setGlobalCursorPos(pt);
-        // Sync dot position with main process for distance calculation
-        window.electronAPI?.updateDotPos({
-          x: pt.x + (settings.dot.offsetX || 12),
-          y: pt.y + (settings.dot.offsetY || 2),
-        });
+    if (window.electronAPI?.onMenuTrigger && route === 'menu') {
+      const unsubscribe = window.electronAPI.onMenuTrigger((data: { selectedText: string; x: number; y: number }) => {
+        setCapturedText(data.selectedText || '');
+        setCurrentDiff(null);
       });
-
-      // Global hotkey menu trigger listener
-      const unsubscribeHotkey = window.electronAPI.onTriggerMenu?.(async (pt) => {
-        const selected = await window.electronAPI?.captureActiveSelection();
-        setExternalCapturedText(selected || '');
-        setMenuPosition(pt);
-        setIsActionMenuOpen(true);
-      });
-
-      return () => {
-        unsubscribeCursor?.();
-        unsubscribeHotkey?.();
-      };
+      return unsubscribe;
     }
-  }, [isDedicatedEditor, settings.dot.offsetX, settings.dot.offsetY]);
+  }, [route]);
 
-  // 5. Action Execution Engine (Handles both in-editor and external app text)
-  const executeAction = async (
+  // Execute AI action on captured text
+  const handleExecuteActionOnCaptured = async (
     action: ActionType,
     options?: { tone?: ToneType; targetLanguage?: string; customPrompt?: string }
   ) => {
-    setIsActionMenuOpen(false);
-
-    let targetText = content;
-    let range: { start: number; end: number } | undefined;
-
-    if (!isDedicatedEditor && externalCapturedText) {
-      targetText = externalCapturedText;
-    } else if (isDedicatedEditor && editorRef.current) {
-      const start = editorRef.current.selectionStart;
-      const end = editorRef.current.selectionEnd;
-      if (start !== end) {
-        const selected = content.substring(start, end);
-        if (selected.trim().length > 0) {
-          targetText = selected;
-          range = { start, end };
-        }
-      }
-    }
-
-    if (!targetText.trim()) {
-      addToast('warning', 'No Text Highlighted', 'Highlight some text in any window first, then click Dotty.');
+    const textToProcess = capturedText.trim() || content;
+    if (!textToProcess) {
+      addToast('warning', 'No Text Highlighted', 'Highlight text in any application and click Dotty.');
       return;
     }
 
     setIsProcessing(true);
-    setDotStatus('processing');
-
     try {
       const result = await processTextWithAI({
         action,
-        text: targetText,
+        text: textToProcess,
         tone: options?.tone,
         customPrompt: options?.customPrompt,
         targetLanguage: options?.targetLanguage,
@@ -173,210 +126,222 @@ export function App() {
         customRules: settings.customRules,
       });
 
-      result.range = range;
       setCurrentDiff(result);
-      setIsDiffModalOpen(true);
-      setDotStatus('success');
-      setTimeout(() => setDotStatus('idle'), 2000);
     } catch (err: any) {
-      setDotStatus('error');
-      setTimeout(() => setDotStatus('idle'), 3000);
-      addToast('error', 'Action Failed', err.message || 'An error occurred during AI processing.');
+      addToast('error', 'Action Failed', err.message || 'Error running action.');
     } finally {
       setIsProcessing(false);
     }
   };
 
-  // 6. Diff Acceptance & Replacement
-  const handleAcceptDiff = async (enhancedText: string, applyToSelectionOnly: boolean) => {
-    setIsDiffModalOpen(false);
-    if (!currentDiff) return;
-
-    // External window injection
-    if (!isDedicatedEditor && window.electronAPI && externalCapturedText) {
-      await window.electronAPI.pasteToActiveWindow(enhancedText);
-      addToast('success', 'Text Replaced', 'Pasted enhanced text into your application.');
-      setExternalCapturedText('');
-      setCurrentDiff(null);
-      return;
-    }
-
-    // In-Editor replacement
-    let nextContent = content;
-    if (applyToSelectionOnly && currentDiff.range) {
-      const { start, end } = currentDiff.range;
-      nextContent = content.substring(0, start) + enhancedText + content.substring(end);
-    } else {
-      nextContent = enhancedText;
-    }
-
-    pushState(nextContent, undefined, true);
-    setTabs((prev) =>
-      prev.map((t) => (t.id === activeTab.id ? { ...t, content: nextContent, updatedAt: Date.now() } : t))
-    );
-
-    addToast('success', 'Changes Applied', `Updated via ${currentDiff.action}.`);
-    setCurrentDiff(null);
-
-    requestAnimationFrame(() => {
-      editorRef.current?.focus();
-      updateCaretPosition();
-    });
-  };
-
-  // 7. Dot Click Handler
-  const handleDotClick = async () => {
-    if (!isDedicatedEditor && window.electronAPI) {
-      const selected = await window.electronAPI.captureActiveSelection();
-      setExternalCapturedText(selected || '');
-      setMenuPosition({ x: globalCursorPos.x, y: globalCursorPos.y });
-    } else {
-      setMenuPosition({ x: localCaretPosition.x, y: localCaretPosition.y });
-    }
-
-    setIsActionMenuOpen(true);
-  };
-
-  // 8. Keyboard Shortcuts
-  useKeyboardShortcuts({
-    onTriggerMenu: async () => {
-      if (!isDedicatedEditor && window.electronAPI) {
-        const selected = await window.electronAPI.captureActiveSelection();
-        setExternalCapturedText(selected || '');
-        setMenuPosition({ x: globalCursorPos.x, y: globalCursorPos.y });
-      } else {
-        setMenuPosition({ x: localCaretPosition.x, y: localCaretPosition.y });
-      }
-      setIsActionMenuOpen(true);
-    },
-    onFixGrammar: () => executeAction('grammar'),
-    onEnhancePrompt: () => executeAction('enhance-prompt'),
-    onUndo: () => {
-      const prev = undo();
-      if (prev !== null) {
-        setTabs((t) => t.map((tab) => (tab.id === activeTab.id ? { ...tab, content: prev } : tab)));
-      }
-    },
-    onRedo: () => {
-      const next = redo();
-      if (next !== null) {
-        setTabs((t) => t.map((tab) => (tab.id === activeTab.id ? { ...tab, content: next } : tab)));
-      }
-    },
-    onEscape: () => {
-      setIsActionMenuOpen(false);
-      setIsDiffModalOpen(false);
-      setIsSettingsOpen(false);
-      setIsTemplatesOpen(false);
-    },
-  });
-
-  const activeDotPosition: CaretPosition = isDedicatedEditor
-    ? localCaretPosition
-    : {
-        x: globalCursorPos.x,
-        y: globalCursorPos.y,
-        height: 24,
-        visible: true,
-        isSelection: Boolean(externalCapturedText),
-        selectedText: externalCapturedText,
-      };
-
   // =========================================================================
-  // VIEW 1: SYSTEM-WIDE SCREEN OVERLAY (DIRECTLY ON WINDOWS DESKTOP)
+  // ROUTE 1: #dot — COMPACT 52x52 FLOATING DESKTOP BUBBLE
   // =========================================================================
-  if (!isDedicatedEditor) {
+  if (route === 'dot') {
     return (
-      <div className="fixed inset-0 w-screen h-screen pointer-events-none overflow-hidden select-none bg-transparent">
-        {/* Floating System-Wide Cursor Dot */}
-        <div className="pointer-events-auto">
-          <CaretDot
-            position={activeDotPosition}
-            settings={settings.dot}
-            isProcessing={isProcessing}
-            status={dotStatus}
-            onClick={handleDotClick}
+      <div
+        className="w-full h-full flex items-center justify-center bg-transparent select-none cursor-pointer"
+        onClick={() => {
+          window.electronAPI?.openMenuWindow();
+        }}
+        title="Dotty AI Assistant (Alt+Space)"
+      >
+        <div className="relative group flex items-center justify-center">
+          {/* Pulsing ring */}
+          <div
+            className="absolute -inset-1 rounded-full opacity-60 animate-ping"
+            style={{ backgroundColor: settings.dot.color }}
           />
-        </div>
 
-        {/* Floating Action Menu near Cursor */}
-        <div className="pointer-events-auto">
-          <ActionMenu
-            isOpen={isActionMenuOpen}
-            position={menuPosition}
-            hasSelection={Boolean(externalCapturedText)}
-            selectedText={externalCapturedText}
-            totalText={externalCapturedText || 'Active Screen Text'}
-            activeGrammarProvider={settings.ai.activeGrammarProvider}
-            activePromptProvider={settings.ai.activePromptProvider}
-            onSelectAction={executeAction}
-            onClose={() => setIsActionMenuOpen(false)}
-            onOpenSettings={() => {
-              setIsActionMenuOpen(false);
-              setIsSettingsOpen(true);
+          {/* Main Bubble */}
+          <div
+            className="relative w-9 h-9 rounded-full flex items-center justify-center shadow-2xl transition-transform transform group-hover:scale-110"
+            style={{
+              backgroundColor: '#0f172a',
+              border: `2px solid ${settings.dot.color}`,
+              boxShadow: `0 0 16px 2px ${settings.dot.color}aa`,
             }}
-          />
-        </div>
-
-        {/* Floating Modals */}
-        <div className="pointer-events-auto">
-          <DiffModal
-            isOpen={isDiffModalOpen}
-            diffResult={currentDiff}
-            hasSelection={Boolean(externalCapturedText)}
-            onAccept={handleAcceptDiff}
-            onReject={() => setIsDiffModalOpen(false)}
-            onCopy={(text) => {
-              navigator.clipboard.writeText(text);
-              addToast('success', 'Copied to Clipboard');
-            }}
-          />
-
-          <SettingsModal
-            isOpen={isSettingsOpen}
-            settings={settings}
-            onSave={(newSettings) => {
-              setSettings(newSettings);
-              addToast('success', 'Preferences Saved');
-            }}
-            onClose={() => setIsSettingsOpen(false)}
-          />
-
-          <QuickTemplatesModal
-            isOpen={isTemplatesOpen}
-            onSelectTemplate={async (tpl) => {
-              if (window.electronAPI) {
-                await window.electronAPI.pasteToActiveWindow(tpl);
-                addToast('success', 'Template Pasted');
-              }
-              setIsTemplatesOpen(false);
-            }}
-            onClose={() => setIsTemplatesOpen(false)}
-          />
-        </div>
-
-        {/* Quick Notepad Launcher Button (Bottom Right) */}
-        <div className="fixed bottom-4 right-4 pointer-events-auto">
-          <button
-            onClick={() => window.electronAPI?.openEditorWindow()}
-            className="px-3 py-1.5 rounded-full bg-slate-900/95 hover:bg-slate-800 border border-slate-700/80 text-xs font-medium text-slate-200 shadow-2xl backdrop-blur-md flex items-center gap-1.5 transition-all hover:scale-105"
-            title="Open Standalone Notepad"
           >
-            <Edit3 className="w-3.5 h-3.5 text-sky-400" />
-            <span>Open Notepad</span>
-          </button>
-        </div>
-
-        {/* Toast Notifications */}
-        <div className="pointer-events-auto">
-          <ToastContainer toasts={toasts} onDismiss={removeToast} />
+            <Sparkles className="w-4 h-4 text-sky-400 animate-pulse" />
+          </div>
         </div>
       </div>
     );
   }
 
   // =========================================================================
-  // VIEW 2: STANDALONE NOTEPAD SCRATCHPAD (Full Window)
+  // ROUTE 2: #menu — FLOATING ACTION MENU & DIFF REVIEW
+  // =========================================================================
+  if (route === 'menu') {
+    return (
+      <div className="w-full h-full p-2 bg-transparent select-none">
+        <div className="w-full h-full bg-slate-900/98 border border-slate-700/90 rounded-2xl shadow-2xl flex flex-col overflow-hidden text-slate-100 backdrop-blur-xl">
+          {/* Header */}
+          <div className="px-3.5 py-2.5 bg-slate-800/80 border-b border-slate-700/80 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
+              <span className="text-xs font-semibold text-slate-200 uppercase tracking-wider">Dotty AI</span>
+              {capturedText && (
+                <span className="text-[10px] bg-slate-800 text-sky-300 px-1.5 py-0.5 rounded border border-slate-700 font-mono">
+                  {capturedText.split(/\s+/).filter(Boolean).length}w selected
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => window.electronAPI?.closeMenuWindow()}
+              className="p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Content Body: Action Menu or Diff Review */}
+          <div className="flex-1 p-2 overflow-y-auto space-y-1.5">
+            {currentDiff ? (
+              /* Diff Review Card */
+              <div className="space-y-3 p-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-sky-300 flex items-center gap-1">
+                    <Zap className="w-3.5 h-3.5 text-amber-400" />
+                    {currentDiff.action}
+                  </span>
+                </div>
+
+                {/* Original vs Enhanced preview */}
+                <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto text-emerald-300">
+                  {currentDiff.enhancedText}
+                </div>
+
+                {/* Actions */}
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    onClick={async () => {
+                      if (window.electronAPI) {
+                        await window.electronAPI.pasteToActiveWindow(currentDiff.enhancedText);
+                      }
+                      setCurrentDiff(null);
+                    }}
+                    className="flex-1 py-2 bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 shadow-lg shadow-sky-500/25 transition-all"
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>Replace in App</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(currentDiff.enhancedText);
+                      addToast('success', 'Copied');
+                    }}
+                    className="p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-300 hover:text-white transition-colors"
+                    title="Copy to Clipboard"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </button>
+
+                  <button
+                    onClick={() => setCurrentDiff(null)}
+                    className="px-2.5 py-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-400 hover:text-slate-200 text-xs transition-colors"
+                  >
+                    Back
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* Main Action Buttons */
+              <div className="space-y-1">
+                <button
+                  onClick={() => handleExecuteActionOnCaptured('grammar')}
+                  disabled={isProcessing}
+                  className="w-full px-3 py-2.5 rounded-xl text-left bg-slate-800/60 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-colors group"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400">
+                      <Sparkles className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold">Fix Grammar & Spelling</div>
+                      <div className="text-[10px] text-slate-400">Sub-4ms local correction</div>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-500 group-hover:text-slate-300">Alt+G</span>
+                </button>
+
+                <button
+                  onClick={() => handleExecuteActionOnCaptured('enhance-prompt')}
+                  disabled={isProcessing}
+                  className="w-full px-3 py-2.5 rounded-xl text-left bg-slate-800/60 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-colors group"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-1.5 rounded-lg bg-sky-500/10 text-sky-400">
+                      <Sparkles className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold">Enhance Prompt</div>
+                      <div className="text-[10px] text-slate-400">Role, context, output structure</div>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-500 group-hover:text-slate-300">Alt+P</span>
+                </button>
+
+                <button
+                  onClick={() => handleExecuteActionOnCaptured('tone', { tone: 'accessible' })}
+                  disabled={isProcessing}
+                  className="w-full px-3 py-2 rounded-xl text-left bg-slate-800/40 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-colors"
+                >
+                  <div>
+                    <div className="text-xs font-medium">🌿 Plain English (Accessible)</div>
+                    <div className="text-[10px] text-slate-400">Simplify complex jargon</div>
+                  </div>
+                  <ArrowRight className="w-3.5 h-3.5 text-slate-500" />
+                </button>
+
+                <button
+                  onClick={() => handleExecuteActionOnCaptured('tone', { tone: 'professional' })}
+                  disabled={isProcessing}
+                  className="w-full px-3 py-2 rounded-xl text-left bg-slate-800/40 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-colors"
+                >
+                  <div>
+                    <div className="text-xs font-medium">💼 Professional Tone</div>
+                    <div className="text-[10px] text-slate-400">Corporate & executive phrasing</div>
+                  </div>
+                  <ArrowRight className="w-3.5 h-3.5 text-slate-500" />
+                </button>
+
+                <button
+                  onClick={() => handleExecuteActionOnCaptured('summarize')}
+                  disabled={isProcessing}
+                  className="w-full px-3 py-2 rounded-xl text-left bg-slate-800/40 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-colors"
+                >
+                  <div>
+                    <div className="text-xs font-medium">📋 Summarize Key Takeaways</div>
+                    <div className="text-[10px] text-slate-400">Extract bullet points</div>
+                  </div>
+                  <ArrowRight className="w-3.5 h-3.5 text-slate-500" />
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Footer: Open Notepad link */}
+          <div className="px-3.5 py-2 bg-slate-950/80 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+            <button
+              onClick={() => window.electronAPI?.openEditorWindow()}
+              className="flex items-center gap-1.5 text-sky-400 hover:text-sky-300 font-medium transition-colors"
+            >
+              <Edit3 className="w-3.5 h-3.5" />
+              <span>Open Standalone Notepad</span>
+            </button>
+            <span className="text-[10px] text-slate-500">100% Offline</span>
+          </div>
+        </div>
+
+        <ToastContainer toasts={toasts} onDismiss={removeToast} />
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // ROUTE 3: #editor (or Default) — STANDALONE FULL SCRATCHPAD NOTEPAD
   // =========================================================================
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden select-none font-sans">
@@ -414,8 +379,8 @@ export function App() {
           const next = redo();
           if (next !== null) setTabs((t) => t.map((tab) => (tab.id === activeTab.id ? { ...tab, content: next } : tab)));
         }}
-        onQuickGrammar={() => executeAction('grammar')}
-        onQuickEnhance={() => executeAction('enhance-prompt')}
+        onQuickGrammar={() => handleExecuteActionOnCaptured('grammar')}
+        onQuickEnhance={() => handleExecuteActionOnCaptured('enhance-prompt')}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenTemplates={() => setIsTemplatesOpen(true)}
         onExport={(format) => {
@@ -448,23 +413,9 @@ export function App() {
           position={localCaretPosition}
           settings={settings.dot}
           isProcessing={isProcessing}
-          status={dotStatus}
-          onClick={handleDotClick}
-        />
-
-        <ActionMenu
-          isOpen={isActionMenuOpen}
-          position={menuPosition}
-          hasSelection={localCaretPosition.isSelection}
-          selectedText={localCaretPosition.selectedText}
-          totalText={content}
-          activeGrammarProvider={settings.ai.activeGrammarProvider}
-          activePromptProvider={settings.ai.activePromptProvider}
-          onSelectAction={executeAction}
-          onClose={() => setIsActionMenuOpen(false)}
-          onOpenSettings={() => {
-            setIsActionMenuOpen(false);
-            setIsSettingsOpen(true);
+          status="idle"
+          onClick={() => {
+            window.electronAPI?.openMenuWindow();
           }}
         />
       </main>
@@ -474,18 +425,6 @@ export function App() {
         activeGrammarProvider={settings.ai.activeGrammarProvider}
         activePromptProvider={settings.ai.activePromptProvider}
         isAutoSaved={true}
-      />
-
-      <DiffModal
-        isOpen={isDiffModalOpen}
-        diffResult={currentDiff}
-        hasSelection={Boolean(currentDiff?.range)}
-        onAccept={handleAcceptDiff}
-        onReject={() => setIsDiffModalOpen(false)}
-        onCopy={(text) => {
-          navigator.clipboard.writeText(text);
-          addToast('success', 'Copied to Clipboard');
-        }}
       />
 
       <SettingsModal

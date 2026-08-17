@@ -1,7 +1,12 @@
-import { app, BrowserWindow, shell, globalShortcut, ipcMain } from 'electron';
-import path from 'path';
+import { app, BrowserWindow, shell, globalShortcut } from 'electron';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-// Set app user model id for Windows
+// Resolve __dirname in ESM
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Set app user model id for Windows notifications/taskbar
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.dotty.app');
 }
@@ -16,7 +21,7 @@ function createWindow() {
     minHeight: 550,
     backgroundColor: '#020617',
     title: 'Dotty — AI Typing Assistant & Smart Editor',
-    show: false,
+    show: true,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -28,6 +33,7 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
+    mainWindow?.focus();
   });
 
   // Open external links in user's default browser
@@ -36,22 +42,30 @@ function createWindow() {
     return { action: 'deny' };
   });
 
-  // Load URL in dev mode or file in production
-  if (process.env.VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devServerUrl) {
+    mainWindow.loadURL(devServerUrl);
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    // Production: load bundled index.html
+    const indexPath = path.join(__dirname, '../dist/index.html');
+    mainWindow.loadFile(indexPath).catch((err) => {
+      console.error('Failed to load file from dist path:', err);
+      // Fallback
+      const fallbackPath = path.join(app.getAppPath(), 'dist/index.html');
+      mainWindow?.loadFile(fallbackPath);
+    });
   }
 }
 
 app.whenReady().then(() => {
   createWindow();
 
-  // Register desktop global shortcut to bring Dotty to focus
+  // Register desktop global shortcut to focus Dotty
   try {
     globalShortcut.register('Alt+Space', () => {
       if (mainWindow) {
         if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
         mainWindow.focus();
       }
     });
@@ -64,6 +78,8 @@ app.whenReady().then(() => {
       createWindow();
     }
   });
+}).catch((err) => {
+  console.error('Error during app.whenReady:', err);
 });
 
 app.on('will-quit', () => {

@@ -3,6 +3,16 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   
+  // Update dot coordinates in main process for distance collision detection
+  updateDotPos: (pos: { x: number; y: number }) => {
+    ipcRenderer.send('update-dot-pos', pos);
+  },
+
+  // Notify main process when menu / modal is open so it stays interactive
+  setMenuOpen: (isOpen: boolean) => {
+    ipcRenderer.send('set-menu-open', isOpen);
+  },
+
   // Mouse events for transparent click-through overlay
   setIgnoreMouseEvents: (ignore: boolean, options?: { forward: boolean }) => {
     ipcRenderer.send('set-ignore-mouse-events', ignore, options);
@@ -14,6 +24,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('global-cursor-move', listener);
     return () => {
       ipcRenderer.removeListener('global-cursor-move', listener);
+    };
+  },
+
+  // Global hotkey menu trigger
+  onTriggerMenu: (callback: (point: { x: number; y: number }) => void) => {
+    const listener = (_event: any, point: { x: number; y: number }) => callback(point);
+    ipcRenderer.on('trigger-menu-at-cursor', listener);
+    return () => {
+      ipcRenderer.removeListener('trigger-menu-at-cursor', listener);
     };
   },
 

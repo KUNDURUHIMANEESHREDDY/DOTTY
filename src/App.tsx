@@ -16,7 +16,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { QuickTemplatesModal } from './components/QuickTemplatesModal';
 import { StatsBar } from './components/StatsBar';
 import { ToastContainer } from './components/Toast';
-import { ExternalLink, Edit3 } from 'lucide-react';
+import { Edit3 } from 'lucide-react';
 
 const INITIAL_DEMO_TEXT = `# Welcome to Dotty ✦
 
@@ -36,7 +36,6 @@ write a python script for scraping news headlines
 Click the floating dot anytime to change tone, summarize, or translate.`;
 
 export function App() {
-  // Check if running as dedicated Editor window or Global Screen Overlay
   const isDedicatedEditor = window.location.hash === '#editor';
 
   // 1. Settings & Persistence
@@ -68,30 +67,12 @@ export function App() {
   const { caretPosition: localCaretPosition, updateCaretPosition } = useCaretPosition(editorRef);
 
   // 4. Global Screen Cursor Position (System-Wide Overlay mode)
-  const [globalCursorPos, setGlobalCursorPos] = useState<{ x: number; y: number }>({ x: 100, y: 100 });
-  const [isOverlayActive, setIsOverlayActive] = useState(!isDedicatedEditor);
+  const [globalCursorPos, setGlobalCursorPos] = useState<{ x: number; y: number }>({ x: 200, y: 200 });
   const [externalCapturedText, setExternalCapturedText] = useState<string>('');
-
-  // Manage click-through for transparent overlay window
-  const setInteractive = useCallback((interactive: boolean) => {
-    if (window.electronAPI && !isDedicatedEditor) {
-      window.electronAPI.setIgnoreMouseEvents(!interactive, { forward: true });
-    }
-  }, [isDedicatedEditor]);
-
-  // Subscribe to global cursor move events from Electron
-  useEffect(() => {
-    if (window.electronAPI && !isDedicatedEditor) {
-      const unsubscribe = window.electronAPI.onGlobalCursorMove((pt) => {
-        setGlobalCursorPos(pt);
-      });
-      return unsubscribe;
-    }
-  }, [isDedicatedEditor]);
 
   // Modals & Popups State
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
-  const [menuPosition, setMenuPosition] = useState({ x: 100, y: 100 });
+  const [menuPosition, setMenuPosition] = useState({ x: 200, y: 200 });
   const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
   const [currentDiff, setCurrentDiff] = useState<DiffResult | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -114,13 +95,40 @@ export function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Sync interactive state when popups open/close
+  // Notify Electron main process when menu / modal opens or closes
   useEffect(() => {
-    if (!isDedicatedEditor) {
+    if (window.electronAPI && !isDedicatedEditor) {
       const anyPopupOpen = isActionMenuOpen || isDiffModalOpen || isSettingsOpen || isTemplatesOpen;
-      setInteractive(anyPopupOpen);
+      window.electronAPI.setMenuOpen(anyPopupOpen);
     }
-  }, [isActionMenuOpen, isDiffModalOpen, isSettingsOpen, isTemplatesOpen, isDedicatedEditor, setInteractive]);
+  }, [isActionMenuOpen, isDiffModalOpen, isSettingsOpen, isTemplatesOpen, isDedicatedEditor]);
+
+  // Subscribe to global cursor move events from Electron
+  useEffect(() => {
+    if (window.electronAPI && !isDedicatedEditor) {
+      const unsubscribeCursor = window.electronAPI.onGlobalCursorMove((pt) => {
+        setGlobalCursorPos(pt);
+        // Sync dot position with main process for distance calculation
+        window.electronAPI?.updateDotPos({
+          x: pt.x + (settings.dot.offsetX || 12),
+          y: pt.y + (settings.dot.offsetY || 2),
+        });
+      });
+
+      // Global hotkey menu trigger listener
+      const unsubscribeHotkey = window.electronAPI.onTriggerMenu?.(async (pt) => {
+        const selected = await window.electronAPI?.captureActiveSelection();
+        setExternalCapturedText(selected || '');
+        setMenuPosition(pt);
+        setIsActionMenuOpen(true);
+      });
+
+      return () => {
+        unsubscribeCursor?.();
+        unsubscribeHotkey?.();
+      };
+    }
+  }, [isDedicatedEditor, settings.dot.offsetX, settings.dot.offsetY]);
 
   // 5. Action Execution Engine (Handles both in-editor and external app text)
   const executeAction = async (
@@ -130,12 +138,10 @@ export function App() {
     setIsActionMenuOpen(false);
 
     let targetText = content;
-    let isExternal = false;
     let range: { start: number; end: number } | undefined;
 
     if (!isDedicatedEditor && externalCapturedText) {
       targetText = externalCapturedText;
-      isExternal = true;
     } else if (isDedicatedEditor && editorRef.current) {
       const start = editorRef.current.selectionStart;
       const end = editorRef.current.selectionEnd;
@@ -149,7 +155,7 @@ export function App() {
     }
 
     if (!targetText.trim()) {
-      addToast('warning', 'No Text Selected', 'Highlight text in any application and click Dotty to process.');
+      addToast('warning', 'No Text Highlighted', 'Highlight some text in any window first, then click Dotty.');
       return;
     }
 
@@ -186,13 +192,12 @@ export function App() {
     setIsDiffModalOpen(false);
     if (!currentDiff) return;
 
-    // If we captured text from an external application (e.g. Chrome, Word, VSCode)
+    // External window injection
     if (!isDedicatedEditor && window.electronAPI && externalCapturedText) {
       await window.electronAPI.pasteToActiveWindow(enhancedText);
-      addToast('success', 'Pasted to Active Window', 'Replaced text in your application.');
+      addToast('success', 'Text Replaced', 'Pasted enhanced text into your application.');
       setExternalCapturedText('');
       setCurrentDiff(null);
-      setInteractive(false);
       return;
     }
 
@@ -219,19 +224,17 @@ export function App() {
     });
   };
 
-  // 7. Dot Click Handler (System-Wide vs Editor)
+  // 7. Dot Click Handler
   const handleDotClick = async () => {
     if (!isDedicatedEditor && window.electronAPI) {
-      // Capture highlighted text from whatever app the user is actively in
       const selected = await window.electronAPI.captureActiveSelection();
-      setExternalCapturedText(selected);
+      setExternalCapturedText(selected || '');
       setMenuPosition({ x: globalCursorPos.x, y: globalCursorPos.y });
     } else {
       setMenuPosition({ x: localCaretPosition.x, y: localCaretPosition.y });
     }
 
-    setInteractive(true);
-    setIsActionMenuOpen((prev) => !prev);
+    setIsActionMenuOpen(true);
   };
 
   // 8. Keyboard Shortcuts
@@ -239,13 +242,12 @@ export function App() {
     onTriggerMenu: async () => {
       if (!isDedicatedEditor && window.electronAPI) {
         const selected = await window.electronAPI.captureActiveSelection();
-        setExternalCapturedText(selected);
+        setExternalCapturedText(selected || '');
         setMenuPosition({ x: globalCursorPos.x, y: globalCursorPos.y });
       } else {
         setMenuPosition({ x: localCaretPosition.x, y: localCaretPosition.y });
       }
-      setInteractive(true);
-      setIsActionMenuOpen((prev) => !prev);
+      setIsActionMenuOpen(true);
     },
     onFixGrammar: () => executeAction('grammar'),
     onEnhancePrompt: () => executeAction('enhance-prompt'),
@@ -266,11 +268,9 @@ export function App() {
       setIsDiffModalOpen(false);
       setIsSettingsOpen(false);
       setIsTemplatesOpen(false);
-      setInteractive(false);
     },
   });
 
-  // Effective Caret Position based on mode
   const activeDotPosition: CaretPosition = isDedicatedEditor
     ? localCaretPosition
     : {
@@ -283,21 +283,13 @@ export function App() {
       };
 
   // =========================================================================
-  // VIEW 1: SYSTEM-WIDE GLOBAL OVERLAY MODE (VISIBLE DIRECTLY ON DESKTOP SCREEN)
+  // VIEW 1: SYSTEM-WIDE SCREEN OVERLAY (DIRECTLY ON WINDOWS DESKTOP)
   // =========================================================================
   if (!isDedicatedEditor) {
     return (
       <div className="fixed inset-0 w-screen h-screen pointer-events-none overflow-hidden select-none bg-transparent">
         {/* Floating System-Wide Cursor Dot */}
-        <div
-          onMouseEnter={() => setInteractive(true)}
-          onMouseLeave={() => {
-            if (!isActionMenuOpen && !isDiffModalOpen && !isSettingsOpen) {
-              setInteractive(false);
-            }
-          }}
-          className="pointer-events-auto"
-        >
+        <div className="pointer-events-auto">
           <CaretDot
             position={activeDotPosition}
             settings={settings.dot}
@@ -308,7 +300,7 @@ export function App() {
         </div>
 
         {/* Floating Action Menu near Cursor */}
-        <div onMouseEnter={() => setInteractive(true)} className="pointer-events-auto">
+        <div className="pointer-events-auto">
           <ActionMenu
             isOpen={isActionMenuOpen}
             position={menuPosition}
@@ -318,10 +310,7 @@ export function App() {
             activeGrammarProvider={settings.ai.activeGrammarProvider}
             activePromptProvider={settings.ai.activePromptProvider}
             onSelectAction={executeAction}
-            onClose={() => {
-              setIsActionMenuOpen(false);
-              setInteractive(false);
-            }}
+            onClose={() => setIsActionMenuOpen(false)}
             onOpenSettings={() => {
               setIsActionMenuOpen(false);
               setIsSettingsOpen(true);
@@ -329,17 +318,14 @@ export function App() {
           />
         </div>
 
-        {/* Global Floating Modals */}
-        <div onMouseEnter={() => setInteractive(true)} className="pointer-events-auto">
+        {/* Floating Modals */}
+        <div className="pointer-events-auto">
           <DiffModal
             isOpen={isDiffModalOpen}
             diffResult={currentDiff}
             hasSelection={Boolean(externalCapturedText)}
             onAccept={handleAcceptDiff}
-            onReject={() => {
-              setIsDiffModalOpen(false);
-              setInteractive(false);
-            }}
+            onReject={() => setIsDiffModalOpen(false)}
             onCopy={(text) => {
               navigator.clipboard.writeText(text);
               addToast('success', 'Copied to Clipboard');
@@ -353,10 +339,7 @@ export function App() {
               setSettings(newSettings);
               addToast('success', 'Preferences Saved');
             }}
-            onClose={() => {
-              setIsSettingsOpen(false);
-              setInteractive(false);
-            }}
+            onClose={() => setIsSettingsOpen(false)}
           />
 
           <QuickTemplatesModal
@@ -364,32 +347,20 @@ export function App() {
             onSelectTemplate={async (tpl) => {
               if (window.electronAPI) {
                 await window.electronAPI.pasteToActiveWindow(tpl);
-                addToast('success', 'Template Pasted into Active Window');
+                addToast('success', 'Template Pasted');
               }
               setIsTemplatesOpen(false);
-              setInteractive(false);
             }}
-            onClose={() => {
-              setIsTemplatesOpen(false);
-              setInteractive(false);
-            }}
+            onClose={() => setIsTemplatesOpen(false)}
           />
         </div>
 
-        {/* Optional floating quick-access badge in bottom-right corner to open Notepad */}
-        <div
-          onMouseEnter={() => setInteractive(true)}
-          onMouseLeave={() => {
-            if (!isActionMenuOpen && !isDiffModalOpen && !isSettingsOpen) {
-              setInteractive(false);
-            }
-          }}
-          className="fixed bottom-4 right-4 pointer-events-auto flex items-center gap-2"
-        >
+        {/* Quick Notepad Launcher Button (Bottom Right) */}
+        <div className="fixed bottom-4 right-4 pointer-events-auto">
           <button
             onClick={() => window.electronAPI?.openEditorWindow()}
-            className="px-3 py-1.5 rounded-full bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 text-xs font-medium text-slate-200 shadow-xl backdrop-blur-md flex items-center gap-1.5 transition-all hover:scale-105"
-            title="Open Dotty Standalone Notepad Scratchpad"
+            className="px-3 py-1.5 rounded-full bg-slate-900/95 hover:bg-slate-800 border border-slate-700/80 text-xs font-medium text-slate-200 shadow-2xl backdrop-blur-md flex items-center gap-1.5 transition-all hover:scale-105"
+            title="Open Standalone Notepad"
           >
             <Edit3 className="w-3.5 h-3.5 text-sky-400" />
             <span>Open Notepad</span>
@@ -397,7 +368,7 @@ export function App() {
         </div>
 
         {/* Toast Notifications */}
-        <div onMouseEnter={() => setInteractive(true)} className="pointer-events-auto">
+        <div className="pointer-events-auto">
           <ToastContainer toasts={toasts} onDismiss={removeToast} />
         </div>
       </div>
@@ -405,7 +376,7 @@ export function App() {
   }
 
   // =========================================================================
-  // VIEW 2: DEDICATED STANDALONE NOTEPAD SCRATCHPAD (Full Window)
+  // VIEW 2: STANDALONE NOTEPAD SCRATCHPAD (Full Window)
   // =========================================================================
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden select-none font-sans">

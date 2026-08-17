@@ -8,6 +8,9 @@ declare global {
       platform: string;
       setIgnoreMouseEvents: (ignore: boolean, options?: { forward: boolean }) => void;
       onGlobalCursorMove: (callback: (point: { x: number; y: number }) => void) => () => void;
+      onTriggerMenu?: (callback: (point: { x: number; y: number }) => void) => () => void;
+      updateDotPos: (pos: { x: number; y: number }) => void;
+      setMenuOpen: (isOpen: boolean) => void;
       captureActiveSelection: () => Promise<string>;
       pasteToActiveWindow: (text: string) => Promise<boolean>;
       openEditorWindow: () => void;

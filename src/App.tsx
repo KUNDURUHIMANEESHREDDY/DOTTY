@@ -16,6 +16,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { QuickTemplatesModal } from './components/QuickTemplatesModal';
 import { StatsBar } from './components/StatsBar';
 import { ToastContainer } from './components/Toast';
+import { Sparkles } from 'lucide-react';
 
 const INITIAL_DEMO_TEXT = `# Welcome to Dotty ✦
 
@@ -126,19 +127,42 @@ export function App() {
   if (!isDedicatedEditor) {
     return (
       <div className="w-screen h-screen bg-transparent select-none overflow-hidden relative font-sans">
-        {/* Floating CaretDot (visible when menu is closed and no diff modal) */}
+        {/* Floating CaretDot (calmly visible next to cursor) */}
         {!isActionMenuOpen && !isDiffModalOpen && (
-          <div className="w-full h-full flex items-center justify-center">
-            <CaretDot
-              position={{ x: 0, y: 0, height: 18, visible: true, isSelection: Boolean(capturedText), selectedText: capturedText }}
-              settings={settings.dot}
-              isProcessing={isProcessing}
-              status={dotStatus}
-              onClick={() => {
-                setIsActionMenuOpen(true);
-                window.electronAPI?.openActionMenu();
-              }}
-            />
+          <div
+            className="w-full h-full flex items-center justify-center cursor-pointer select-none p-1"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setIsActionMenuOpen(true);
+              window.electronAPI?.openActionMenu();
+            }}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setIsActionMenuOpen(true);
+              window.electronAPI?.openActionMenu();
+            }}
+            title="Dotty AI Assistant (Click to open ActionMenu or Ctrl+Shift+Space)"
+          >
+            <div className="relative group flex items-center justify-center pointer-events-auto">
+              {/* Outer Pulsing Glow */}
+              <div
+                className="absolute -inset-1 rounded-full opacity-70 animate-ping pointer-events-none"
+                style={{ backgroundColor: settings.dot.color || '#38bdf8' }}
+              />
+
+              {/* Central Glowing Interactive Dot Bubble */}
+              <div
+                className="relative w-8 h-8 rounded-full flex items-center justify-center shadow-2xl transition-all transform group-hover:scale-115 active:scale-95 cursor-pointer bg-slate-900 border-2"
+                style={{
+                  borderColor: settings.dot.color || '#38bdf8',
+                  boxShadow: `0 0 16px 3px ${settings.dot.color || '#38bdf8'}cc`,
+                }}
+              >
+                <Sparkles className="w-4 h-4 text-sky-300 animate-pulse pointer-events-none" />
+              </div>
+            </div>
           </div>
         )}
 

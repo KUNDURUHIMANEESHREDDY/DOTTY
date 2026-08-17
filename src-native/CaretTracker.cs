@@ -41,15 +41,12 @@ public class CaretTracker {
     [DllImport("user32.dll")]
     public static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
 
-    [DllImport("user32.dll")]
-    public static extern bool GetCaretPos(out POINT lpPoint);
-
     public static void Main(string[] args) {
         int lastX = -1;
         int lastY = -1;
         string lastState = "";
         long lastFoundTime = 0;
-        IntPtr lastHwnd = IntPtr.Zero;
+        IntPtr lastActiveHwnd = IntPtr.Zero;
 
         while (true) {
             try {
@@ -64,7 +61,7 @@ public class CaretTracker {
                     GUITHREADINFO gui = new GUITHREADINFO();
                     gui.cbSize = Marshal.SizeOf(gui);
 
-                    // 1. Win32 GetGUIThreadInfo (Notepad, WordPad, standard text controls)
+                    // 1. Win32 GetGUIThreadInfo (Notepad, WordPad, classic controls)
                     if (GetGUIThreadInfo(threadId, ref gui)) {
                         IntPtr targetHwnd = gui.hwndCaret != IntPtr.Zero ? gui.hwndCaret : gui.hwndFocus;
                         if (targetHwnd != IntPtr.Zero && (gui.rcCaret.Right != 0 || gui.rcCaret.Bottom != 0 || gui.rcCaret.Left != 0 || gui.rcCaret.Top != 0)) {
@@ -100,7 +97,7 @@ public class CaretTracker {
                                     }
                                 }
 
-                                // 3. Fallback: Focused Element Bounding Box (Web Input Fields, Textareas, Search Bars)
+                                // 3. Fallback: Focused Element Bounding Box (Web inputs, textareas)
                                 if (!foundCaret) {
                                     ControlType cType = focused.Current.ControlType;
                                     if (cType == ControlType.Edit || cType == ControlType.Document || focused.Current.IsKeyboardFocusable) {
@@ -123,7 +120,7 @@ public class CaretTracker {
 
                 if (foundCaret) {
                     lastFoundTime = now;
-                    lastHwnd = hwnd;
+                    lastActiveHwnd = hwnd;
                     if (currentX != lastX || currentY != lastY || lastState != "caret") {
                         lastX = currentX;
                         lastY = currentY;
@@ -131,9 +128,9 @@ public class CaretTracker {
                         Console.WriteLine(currentX + "," + currentY + ",caret");
                     }
                 } else {
-                    // Caret Blink Smoothing: Keep dot visible for 1200ms during blink cycles in active window
-                    if (now - lastFoundTime < 1200 && lastX > 0 && lastY > 0 && hwnd == lastHwnd) {
-                        // Maintain last known caret position during blink off-cycle
+                    // Persistent Visibility: Keep dot calmly visible for 30s while user moves mouse to click it
+                    if (lastX > 0 && lastY > 0 && (hwnd == lastActiveHwnd || now - lastFoundTime < 30000)) {
+                        // Maintain last known caret position - DO NOT HIDE!
                     } else {
                         if (lastState != "none") {
                             lastState = "none";
@@ -147,7 +144,7 @@ public class CaretTracker {
                 // Ignore transient errors
             }
 
-            Thread.Sleep(30); // ~33 FPS smooth tracking
+            Thread.Sleep(30);
         }
     }
 }

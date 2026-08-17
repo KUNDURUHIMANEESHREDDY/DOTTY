@@ -41,12 +41,10 @@ public class CaretTracker {
     [DllImport("user32.dll")]
     public static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
 
-    [DllImport("user32.dll")]
-    public static extern bool GetCursorPos(out POINT lpPoint);
-
     public static void Main(string[] args) {
         int lastX = -1;
         int lastY = -1;
+        string lastState = "";
 
         while (true) {
             try {
@@ -54,69 +52,72 @@ public class CaretTracker {
                 int currentX = 0;
                 int currentY = 0;
 
-                // 1. Win32 GetGUIThreadInfo (Ultra-fast for standard Win32 text fields)
                 IntPtr hwnd = GetForegroundWindow();
-                uint threadId = GetWindowThreadProcessId(hwnd, IntPtr.Zero);
-                GUITHREADINFO gui = new GUITHREADINFO();
-                gui.cbSize = Marshal.SizeOf(gui);
+                if (hwnd != IntPtr.Zero) {
+                    uint threadId = GetWindowThreadProcessId(hwnd, IntPtr.Zero);
+                    GUITHREADINFO gui = new GUITHREADINFO();
+                    gui.cbSize = Marshal.SizeOf(gui);
 
-                if (GetGUIThreadInfo(threadId, ref gui)) {
-                    IntPtr targetHwnd = gui.hwndCaret != IntPtr.Zero ? gui.hwndCaret : gui.hwndFocus;
-                    if (targetHwnd != IntPtr.Zero && (gui.rcCaret.Right != 0 || gui.rcCaret.Bottom != 0)) {
-                        POINT pt = new POINT { X = gui.rcCaret.Right, Y = gui.rcCaret.Bottom };
-                        if (ClientToScreen(targetHwnd, ref pt)) {
-                            if (pt.X > 0 && pt.Y > 0) {
-                                currentX = pt.X;
-                                currentY = pt.Y;
-                                foundCaret = true;
-                            }
-                        }
-                    }
-                }
-
-                // 2. Windows UI Automation (For Chromium, Edge, Word, VS Code, Slack, Electron)
-                if (!foundCaret) {
-                    try {
-                        AutomationElement focused = AutomationElement.FocusedElement;
-                        if (focused != null) {
-                            object patternObj;
-                            if (focused.TryGetCurrentPattern(TextPattern.Pattern, out patternObj)) {
-                                TextPattern textPattern = (TextPattern)patternObj;
-                                TextPatternRange[] selection = textPattern.GetSelection();
-                                if (selection != null && selection.Length > 0) {
-                                    Rect[] rects = selection[0].GetBoundingRectangles();
-                                    if (rects != null && rects.Length > 0 && rects[0].Width >= 0) {
-                                        currentX = (int)(rects[0].Right);
-                                        currentY = (int)(rects[0].Bottom);
-                                        foundCaret = true;
-                                    }
+                    // 1. Win32 GetGUIThreadInfo
+                    if (GetGUIThreadInfo(threadId, ref gui)) {
+                        IntPtr targetHwnd = gui.hwndCaret != IntPtr.Zero ? gui.hwndCaret : gui.hwndFocus;
+                        if (targetHwnd != IntPtr.Zero && (gui.rcCaret.Right != 0 || gui.rcCaret.Bottom != 0 || gui.rcCaret.Left != 0 || gui.rcCaret.Top != 0)) {
+                            POINT pt = new POINT { X = gui.rcCaret.Right, Y = gui.rcCaret.Bottom };
+                            if (ClientToScreen(targetHwnd, ref pt)) {
+                                if (pt.X > 0 && pt.Y > 0) {
+                                    currentX = pt.X;
+                                    currentY = pt.Y;
+                                    foundCaret = true;
                                 }
                             }
                         }
-                    } catch {
-                        // Ignore transient UIA COM errors
+                    }
+
+                    // 2. Windows UI Automation (for Chromium browsers, Word, VS Code, Slack, WPF)
+                    if (!foundCaret) {
+                        try {
+                            AutomationElement focused = AutomationElement.FocusedElement;
+                            if (focused != null) {
+                                object patternObj;
+                                if (focused.TryGetCurrentPattern(TextPattern.Pattern, out patternObj)) {
+                                    TextPattern textPattern = (TextPattern)patternObj;
+                                    TextPatternRange[] selection = textPattern.GetSelection();
+                                    if (selection != null && selection.Length > 0) {
+                                        Rect[] rects = selection[0].GetBoundingRectangles();
+                                        if (rects != null && rects.Length > 0 && rects[0].Width >= 0) {
+                                            currentX = (int)(rects[0].Right);
+                                            currentY = (int)(rects[0].Bottom);
+                                            foundCaret = true;
+                                        }
+                                    }
+                                }
+                            }
+                        } catch {
+                            // Transient UIA COM errors
+                        }
                     }
                 }
 
-                // 3. Fallback to mouse cursor position
-                if (!foundCaret) {
-                    POINT mousePt;
-                    if (GetCursorPos(out mousePt)) {
-                        currentX = mousePt.X;
-                        currentY = mousePt.Y;
+                if (foundCaret) {
+                    if (currentX != lastX || currentY != lastY || lastState != "caret") {
+                        lastX = currentX;
+                        lastY = currentY;
+                        lastState = "caret";
+                        Console.WriteLine(currentX + "," + currentY + ",caret");
                     }
-                }
-
-                if (currentX > 0 && currentY > 0 && (currentX != lastX || currentY != lastY)) {
-                    lastX = currentX;
-                    lastY = currentY;
-                    Console.WriteLine(currentX + "," + currentY + "," + (foundCaret ? "caret" : "mouse"));
+                } else {
+                    if (lastState != "none") {
+                        lastState = "none";
+                        lastX = -1;
+                        lastY = -1;
+                        Console.WriteLine("0,0,none");
+                    }
                 }
             } catch {
                 // Ignore transient errors
             }
 
-            Thread.Sleep(30); // ~33 FPS tracking
+            Thread.Sleep(35); // 28 FPS caret polling
         }
     }
 }

@@ -16,7 +16,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { QuickTemplatesModal } from './components/QuickTemplatesModal';
 import { StatsBar } from './components/StatsBar';
 import { ToastContainer } from './components/Toast';
-import { Sparkles, Edit3, X, Check, Copy, ArrowRight, Zap } from 'lucide-react';
+import { Sparkles, Edit3, X, Check, Copy, ArrowRight, Zap, RefreshCw } from 'lucide-react';
 
 const INITIAL_DEMO_TEXT = `# Welcome to Dotty ✦
 
@@ -110,7 +110,7 @@ export function App() {
   ) => {
     const textToProcess = capturedText.trim() || content;
     if (!textToProcess) {
-      addToast('warning', 'No Text Highlighted', 'Highlight text in any application and click Dotty.');
+      addToast('warning', 'No Text Selected', 'Highlight text in any application and click Dotty.');
       return;
     }
 
@@ -135,31 +135,36 @@ export function App() {
   };
 
   // =========================================================================
-  // ROUTE 1: #dot — COMPACT 52x52 FLOATING DESKTOP BUBBLE
+  // ROUTE 1: #dot — FLOATING KEYBOARD CARET DOT BUBBLE
   // =========================================================================
   if (route === 'dot') {
     return (
       <div
         className="w-full h-full flex items-center justify-center bg-transparent select-none cursor-pointer"
-        onClick={() => {
+        onMouseDown={(e) => {
+          e.preventDefault();
+          window.electronAPI?.openMenuWindow();
+        }}
+        onClick={(e) => {
+          e.preventDefault();
           window.electronAPI?.openMenuWindow();
         }}
         title="Dotty AI Assistant (Alt+Space)"
       >
         <div className="relative group flex items-center justify-center">
-          {/* Pulsing ring */}
+          {/* Subtle Outer Glow */}
           <div
             className="absolute -inset-1 rounded-full opacity-60 animate-ping"
-            style={{ backgroundColor: settings.dot.color }}
+            style={{ backgroundColor: settings.dot.color || '#38bdf8' }}
           />
 
-          {/* Main Bubble */}
+          {/* Main Interactive Bubble */}
           <div
-            className="relative w-9 h-9 rounded-full flex items-center justify-center shadow-2xl transition-transform transform group-hover:scale-110"
+            className="relative w-8 h-8 rounded-full flex items-center justify-center shadow-2xl transition-all transform group-hover:scale-110 active:scale-95"
             style={{
               backgroundColor: '#0f172a',
-              border: `2px solid ${settings.dot.color}`,
-              boxShadow: `0 0 16px 2px ${settings.dot.color}aa`,
+              border: `2px solid ${settings.dot.color || '#38bdf8'}`,
+              boxShadow: `0 0 16px 2px ${settings.dot.color || '#38bdf8'}aa`,
             }}
           >
             <Sparkles className="w-4 h-4 text-sky-400 animate-pulse" />
@@ -170,45 +175,51 @@ export function App() {
   }
 
   // =========================================================================
-  // ROUTE 2: #menu — FLOATING ACTION MENU & DIFF REVIEW
+  // ROUTE 2: #menu — FLOATING ACTION MENU & FEATURES TAB
   // =========================================================================
   if (route === 'menu') {
     return (
       <div className="w-full h-full p-2 bg-transparent select-none">
-        <div className="w-full h-full bg-slate-900/98 border border-slate-700/90 rounded-2xl shadow-2xl flex flex-col overflow-hidden text-slate-100 backdrop-blur-xl">
+        <div className="w-full h-full bg-slate-900 border border-slate-700/90 rounded-2xl shadow-2xl flex flex-col overflow-hidden text-slate-100 backdrop-blur-2xl">
           {/* Header */}
-          <div className="px-3.5 py-2.5 bg-slate-800/80 border-b border-slate-700/80 flex items-center justify-between">
+          <div className="px-3.5 py-2.5 bg-slate-800/90 border-b border-slate-700/80 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
-              <span className="text-xs font-semibold text-slate-200 uppercase tracking-wider">Dotty AI</span>
-              {capturedText && (
-                <span className="text-[10px] bg-slate-800 text-sky-300 px-1.5 py-0.5 rounded border border-slate-700 font-mono">
-                  {capturedText.split(/\s+/).filter(Boolean).length}w selected
+              <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">Dotty AI</span>
+              {capturedText ? (
+                <span className="text-[10px] bg-slate-950/80 text-sky-300 px-1.5 py-0.5 rounded border border-slate-700 font-mono">
+                  {capturedText.split(/\s+/).filter(Boolean).length} words selected
                 </span>
+              ) : (
+                <span className="text-[10px] text-slate-400">Ready at Cursor</span>
               )}
             </div>
             <button
               onClick={() => window.electronAPI?.closeMenuWindow()}
               className="p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+              title="Close Menu (Esc)"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Content Body: Action Menu or Diff Review */}
-          <div className="flex-1 p-2 overflow-y-auto space-y-1.5">
+          {/* Body: Action Menu or Diff Review */}
+          <div className="flex-1 p-2.5 overflow-y-auto space-y-2">
             {currentDiff ? (
               /* Diff Review Card */
-              <div className="space-y-3 p-2">
+              <div className="space-y-3 p-1">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-sky-300 flex items-center gap-1">
+                  <span className="font-semibold text-sky-300 flex items-center gap-1.5">
                     <Zap className="w-3.5 h-3.5 text-amber-400" />
                     {currentDiff.action}
                   </span>
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    {currentDiff.explanation || 'Enhanced locally'}
+                  </span>
                 </div>
 
-                {/* Original vs Enhanced preview */}
-                <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto text-emerald-300">
+                {/* Enhanced output preview */}
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono whitespace-pre-wrap leading-relaxed max-h-52 overflow-y-auto text-emerald-300 shadow-inner">
                   {currentDiff.enhancedText}
                 </div>
 
@@ -221,7 +232,7 @@ export function App() {
                       }
                       setCurrentDiff(null);
                     }}
-                    className="flex-1 py-2 bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 shadow-lg shadow-sky-500/25 transition-all"
+                    className="flex-1 py-2.5 bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 shadow-lg shadow-sky-500/25 transition-all active:scale-98"
                   >
                     <Check className="w-4 h-4" />
                     <span>Replace in App</span>
@@ -230,9 +241,9 @@ export function App() {
                   <button
                     onClick={() => {
                       navigator.clipboard.writeText(currentDiff.enhancedText);
-                      addToast('success', 'Copied');
+                      addToast('success', 'Copied to Clipboard');
                     }}
-                    className="p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-300 hover:text-white transition-colors"
+                    className="p-2.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-300 hover:text-white transition-colors"
                     title="Copy to Clipboard"
                   >
                     <Copy className="w-4 h-4" />
@@ -240,27 +251,27 @@ export function App() {
 
                   <button
                     onClick={() => setCurrentDiff(null)}
-                    className="px-2.5 py-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-400 hover:text-slate-200 text-xs transition-colors"
+                    className="px-3 py-2.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-400 hover:text-slate-200 text-xs transition-colors"
                   >
                     Back
                   </button>
                 </div>
               </div>
             ) : (
-              /* Main Action Buttons */
-              <div className="space-y-1">
+              /* Features Action Buttons */
+              <div className="space-y-1.5">
                 <button
                   onClick={() => handleExecuteActionOnCaptured('grammar')}
                   disabled={isProcessing}
-                  className="w-full px-3 py-2.5 rounded-xl text-left bg-slate-800/60 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-colors group"
+                  className="w-full px-3 py-2.5 rounded-xl text-left bg-slate-800/80 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-all group border border-slate-700/50 hover:border-slate-600"
                 >
                   <div className="flex items-center gap-2.5">
-                    <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400">
+                    <div className="p-1.5 rounded-lg bg-emerald-500/15 text-emerald-400">
                       <Sparkles className="w-4 h-4" />
                     </div>
                     <div>
-                      <div className="text-xs font-semibold">Fix Grammar & Spelling</div>
-                      <div className="text-[10px] text-slate-400">Sub-4ms local correction</div>
+                      <div className="text-xs font-semibold text-slate-100">Fix Grammar & Spelling</div>
+                      <div className="text-[10px] text-slate-400">Sub-4ms local zero-cloud correction</div>
                     </div>
                   </div>
                   <span className="text-[10px] font-mono text-slate-500 group-hover:text-slate-300">Alt+G</span>
@@ -269,15 +280,15 @@ export function App() {
                 <button
                   onClick={() => handleExecuteActionOnCaptured('enhance-prompt')}
                   disabled={isProcessing}
-                  className="w-full px-3 py-2.5 rounded-xl text-left bg-slate-800/60 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-colors group"
+                  className="w-full px-3 py-2.5 rounded-xl text-left bg-slate-800/80 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-all group border border-slate-700/50 hover:border-slate-600"
                 >
                   <div className="flex items-center gap-2.5">
-                    <div className="p-1.5 rounded-lg bg-sky-500/10 text-sky-400">
+                    <div className="p-1.5 rounded-lg bg-sky-500/15 text-sky-400">
                       <Sparkles className="w-4 h-4" />
                     </div>
                     <div>
-                      <div className="text-xs font-semibold">Enhance Prompt</div>
-                      <div className="text-[10px] text-slate-400">Role, context, output structure</div>
+                      <div className="text-xs font-semibold text-slate-100">Enhance Prompt</div>
+                      <div className="text-[10px] text-slate-400">Role, context, constraints & specs</div>
                     </div>
                   </div>
                   <span className="text-[10px] font-mono text-slate-500 group-hover:text-slate-300">Alt+P</span>
@@ -286,11 +297,11 @@ export function App() {
                 <button
                   onClick={() => handleExecuteActionOnCaptured('tone', { tone: 'accessible' })}
                   disabled={isProcessing}
-                  className="w-full px-3 py-2 rounded-xl text-left bg-slate-800/40 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-colors"
+                  className="w-full px-3 py-2 rounded-xl text-left bg-slate-800/50 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-colors border border-transparent hover:border-slate-700/60"
                 >
                   <div>
-                    <div className="text-xs font-medium">🌿 Plain English (Accessible)</div>
-                    <div className="text-[10px] text-slate-400">Simplify complex jargon</div>
+                    <div className="text-xs font-medium text-slate-200">🌿 Plain English (Accessible)</div>
+                    <div className="text-[10px] text-slate-400">Simplify bureaucratic jargon</div>
                   </div>
                   <ArrowRight className="w-3.5 h-3.5 text-slate-500" />
                 </button>
@@ -298,11 +309,11 @@ export function App() {
                 <button
                   onClick={() => handleExecuteActionOnCaptured('tone', { tone: 'professional' })}
                   disabled={isProcessing}
-                  className="w-full px-3 py-2 rounded-xl text-left bg-slate-800/40 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-colors"
+                  className="w-full px-3 py-2 rounded-xl text-left bg-slate-800/50 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-colors border border-transparent hover:border-slate-700/60"
                 >
                   <div>
-                    <div className="text-xs font-medium">💼 Professional Tone</div>
-                    <div className="text-[10px] text-slate-400">Corporate & executive phrasing</div>
+                    <div className="text-xs font-medium text-slate-200">💼 Professional Tone</div>
+                    <div className="text-[10px] text-slate-400">Polished executive phrasing</div>
                   </div>
                   <ArrowRight className="w-3.5 h-3.5 text-slate-500" />
                 </button>
@@ -310,11 +321,11 @@ export function App() {
                 <button
                   onClick={() => handleExecuteActionOnCaptured('summarize')}
                   disabled={isProcessing}
-                  className="w-full px-3 py-2 rounded-xl text-left bg-slate-800/40 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-colors"
+                  className="w-full px-3 py-2 rounded-xl text-left bg-slate-800/50 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-colors border border-transparent hover:border-slate-700/60"
                 >
                   <div>
-                    <div className="text-xs font-medium">📋 Summarize Key Takeaways</div>
-                    <div className="text-[10px] text-slate-400">Extract bullet points</div>
+                    <div className="text-xs font-medium text-slate-200">📋 Summarize Key Takeaways</div>
+                    <div className="text-[10px] text-slate-400">Extract bullet points offline</div>
                   </div>
                   <ArrowRight className="w-3.5 h-3.5 text-slate-500" />
                 </button>
@@ -323,7 +334,7 @@ export function App() {
           </div>
 
           {/* Footer: Open Notepad link */}
-          <div className="px-3.5 py-2 bg-slate-950/80 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+          <div className="px-3.5 py-2 bg-slate-950 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
             <button
               onClick={() => window.electronAPI?.openEditorWindow()}
               className="flex items-center gap-1.5 text-sky-400 hover:text-sky-300 font-medium transition-colors"
@@ -331,7 +342,10 @@ export function App() {
               <Edit3 className="w-3.5 h-3.5" />
               <span>Open Standalone Notepad</span>
             </button>
-            <span className="text-[10px] text-slate-500">100% Offline</span>
+            <span className="text-[10px] text-emerald-400 font-medium flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              100% Offline
+            </span>
           </div>
         </div>
 

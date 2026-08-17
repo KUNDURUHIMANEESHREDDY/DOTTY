@@ -18,10 +18,9 @@ if (process.platform === 'win32') {
   app.setAppUserModelId('com.dotty.app');
 }
 
-let widgetWindow: BrowserWindow | null = null;
-let editorWindow: BrowserWindow | null = null;
+let dotWindow: BrowserWindow | null = null;
+let mainWindow: BrowserWindow | null = null;
 let trackerProcess: ChildProcess | null = null;
-let isMenuOpen = false;
 let lastCaretPos = { x: 400, y: 300 };
 
 // Helper to simulate Ctrl+C and Ctrl+V on Windows
@@ -41,19 +40,19 @@ function simulateKeyPress(keys: string): Promise<void> {
   });
 }
 
-// 1. SINGLE EXPANDING WIDGET WINDOW (Dot 48x48 <---> Full Features Tab 360x520)
-function createWidgetWindow() {
-  widgetWindow = new BrowserWindow({
+// 1. COMPACT 48x48 FLOATING KEYBOARD CARET DOT (Clicks open Full Dotty Tab)
+function createDotWindow() {
+  dotWindow = new BrowserWindow({
     width: 48,
     height: 48,
     transparent: true,
     frame: false,
     alwaysOnTop: true,
     skipTaskbar: true,
-    resizable: true, // Must be true so setBounds / setSize can dynamically expand to 360x520!
+    resizable: false,
     hasShadow: false,
     focusable: true,
-    show: false,     // Initially hidden until typing is detected
+    show: false, // Initially hidden until typing is detected
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -62,22 +61,58 @@ function createWidgetWindow() {
     },
   });
 
-  widgetWindow.setAlwaysOnTop(true, 'screen-saver');
-  widgetWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  dotWindow.setAlwaysOnTop(true, 'screen-saver');
+  dotWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
   if (devServerUrl) {
-    widgetWindow.loadURL(devServerUrl);
+    dotWindow.loadURL(`${devServerUrl}#dot`);
   } else {
-    widgetWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    dotWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'dot' });
   }
 
-  widgetWindow.on('closed', () => {
-    widgetWindow = null;
+  dotWindow.on('closed', () => {
+    dotWindow = null;
   });
 }
 
-// 2. REAL-TIME NATIVE KEYBOARD CARET TRACKER
+// 2. FULL MAIN APPLICATION WINDOW (Full Tabs, Editor, AI Features, Settings)
+function createMainWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+
+  mainWindow = new BrowserWindow({
+    width: 1100,
+    height: 750,
+    minWidth: 850,
+    minHeight: 550,
+    backgroundColor: '#020617',
+    title: 'Dotty — AI Typing Assistant & Smart Editor',
+    show: true,
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  });
+
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devServerUrl) {
+    mainWindow.loadURL(devServerUrl);
+  } else {
+    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+  }
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+}
+
+// 3. REAL-TIME NATIVE KEYBOARD CARET TRACKER
 function startCaretTracker() {
   const isDev = !app.isPackaged;
   const trackerExecutable = isDev
@@ -102,8 +137,7 @@ function startCaretTracker() {
 
             if (state === 'caret' && !isNaN(x) && !isNaN(y)) {
               lastCaretPos = { x, y };
-              // Follow active typing insertion point when in dot mode
-              if (!isMenuOpen && widgetWindow && !widgetWindow.isDestroyed()) {
+              if (dotWindow && !dotWindow.isDestroyed()) {
                 const display = screen.getDisplayNearestPoint({ x, y });
                 const maxX = display.bounds.x + display.bounds.width - 55;
                 const maxY = display.bounds.y + display.bounds.height - 55;
@@ -111,20 +145,14 @@ function startCaretTracker() {
                 const targetX = Math.min(Math.max(x + 10, display.bounds.x + 5), maxX);
                 const targetY = Math.min(Math.max(y + 2, display.bounds.y + 5), maxY);
 
-                widgetWindow.setBounds({
-                  x: targetX,
-                  y: targetY,
-                  width: 48,
-                  height: 48,
-                });
-
-                if (!widgetWindow.isVisible()) {
-                  widgetWindow.showInactive();
+                dotWindow.setPosition(targetX, targetY);
+                if (!dotWindow.isVisible()) {
+                  dotWindow.showInactive();
                 }
               }
             } else if (state === 'none') {
-              if (!isMenuOpen && widgetWindow && !widgetWindow.isDestroyed() && widgetWindow.isVisible()) {
-                widgetWindow.hide();
+              if (dotWindow && !dotWindow.isDestroyed() && dotWindow.isVisible()) {
+                dotWindow.hide();
               }
             }
           }
@@ -140,50 +168,8 @@ function startCaretTracker() {
   }
 }
 
-// 3. STANDALONE NOTEPAD SCRATCHPAD WINDOW
-function createEditorWindow() {
-  if (editorWindow && !editorWindow.isDestroyed()) {
-    editorWindow.show();
-    editorWindow.focus();
-    return;
-  }
-
-  editorWindow = new BrowserWindow({
-    width: 1100,
-    height: 750,
-    minWidth: 850,
-    minHeight: 550,
-    backgroundColor: '#020617',
-    title: 'Dotty Notepad — Standalone Scratchpad',
-    show: true,
-    autoHideMenuBar: true,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      nodeIntegration: false,
-      contextIsolation: true,
-    },
-  });
-
-  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
-  if (devServerUrl) {
-    editorWindow.loadURL(`${devServerUrl}#editor`);
-  } else {
-    editorWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'editor' });
-  }
-
-  editorWindow.on('closed', () => {
-    editorWindow = null;
-  });
-}
-
-// Expand Widget into Full Features Menu Tab (360x520)
-async function expandToMenu() {
-  if (!widgetWindow || widgetWindow.isDestroyed()) {
-    createWidgetWindow();
-  }
-
-  isMenuOpen = true;
-
+// Open Full Dotty App Window with active selection loaded
+async function openDottyFullApp() {
   // Capture selection from current active window
   let selectedText = '';
   try {
@@ -199,77 +185,28 @@ async function expandToMenu() {
     console.warn('Capture selection error:', err);
   }
 
-  const anchorPoint = (lastCaretPos && lastCaretPos.x > 0) ? lastCaretPos : screen.getCursorScreenPoint();
-  const display = screen.getDisplayNearestPoint(anchorPoint);
-
-  const menuWidth = 360;
-  const menuHeight = 520;
-  let posX = anchorPoint.x + 15;
-  let posY = anchorPoint.y - 20;
-
-  if (posX + menuWidth > display.bounds.x + display.bounds.width) {
-    posX = anchorPoint.x - menuWidth - 15;
-  }
-  if (posY + menuHeight > display.bounds.y + display.bounds.height) {
-    posY = display.bounds.y + display.bounds.height - menuHeight - 10;
-  }
-  if (posY < display.bounds.y + 10) {
-    posY = display.bounds.y + 10;
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createMainWindow();
+  } else {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
   }
 
-  if (widgetWindow && !widgetWindow.isDestroyed()) {
-    // Explicitly set full 360x520 bounds on Windows
-    widgetWindow.setBounds({
-      x: posX,
-      y: posY,
-      width: menuWidth,
-      height: menuHeight,
-    });
-    widgetWindow.show();
-    widgetWindow.focus();
-    widgetWindow.webContents.send('menu-data', {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('load-captured-text', {
       selectedText: selectedText || '',
     });
   }
 }
 
-// Collapse Widget back to Dot (48x48)
-function collapseToDot() {
-  isMenuOpen = false;
-  if (widgetWindow && !widgetWindow.isDestroyed()) {
-    const display = screen.getDisplayNearestPoint(lastCaretPos);
-    const maxX = display.bounds.x + display.bounds.width - 55;
-    const maxY = display.bounds.y + display.bounds.height - 55;
-
-    const targetX = Math.min(Math.max(lastCaretPos.x + 10, display.bounds.x + 5), maxX);
-    const targetY = Math.min(Math.max(lastCaretPos.y + 2, display.bounds.y + 5), maxY);
-
-    widgetWindow.setBounds({
-      x: targetX,
-      y: targetY,
-      width: 48,
-      height: 48,
-    });
-  }
-}
-
 // IPC Handlers
-ipcMain.on('expand-to-menu', () => {
-  expandToMenu();
-});
-
-ipcMain.on('collapse-to-dot', () => {
-  collapseToDot();
-});
-
-ipcMain.on('open-editor-window', () => {
-  collapseToDot();
-  createEditorWindow();
+ipcMain.on('open-dotty-app', () => {
+  openDottyFullApp();
 });
 
 ipcMain.handle('paste-to-active-window', async (_event, text: string) => {
   clipboard.writeText(text);
-  collapseToDot();
   await new Promise((r) => setTimeout(r, 60));
   await simulateKeyPress('^v');
   return true;
@@ -288,17 +225,18 @@ ipcMain.handle('capture-active-selection', async () => {
 });
 
 app.whenReady().then(() => {
-  createWidgetWindow();
+  createDotWindow();
+  createMainWindow();
   startCaretTracker();
 
   // Global Hotkey (Alt+Space or Ctrl+Shift+Space)
   try {
     globalShortcut.register('Alt+Space', () => {
-      expandToMenu();
+      openDottyFullApp();
     });
 
     globalShortcut.register('CommandOrControl+Shift+Space', () => {
-      expandToMenu();
+      openDottyFullApp();
     });
   } catch (err) {
     console.warn('Global shortcut registration failed:', err);

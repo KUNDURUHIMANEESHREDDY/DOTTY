@@ -9,12 +9,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/KUNDURUHIMANEESHREDDY/DOTTY/releases"><img src="https://img.shields.io/github/v/release/KUNDURUHIMANEESHREDDY/DOTTY?color=blue" alt="Release" /></a>
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" />
+  <img src="https://img.shields.io/badge/Offline-100%25_Ready-brightgreen.svg" alt="Offline 100% Ready" />
   <img src="https://img.shields.io/badge/React-18-61dafb.svg" alt="React 18" />
   <img src="https://img.shields.io/badge/TypeScript-5.7-blue.svg" alt="TypeScript 5.7" />
   <img src="https://img.shields.io/badge/Electron-34-47848F.svg" alt="Electron 34" />
-  <img src="https://img.shields.io/badge/TailwindCSS-3.4-38bdf8.svg" alt="Tailwind CSS" />
-  <img src="https://img.shields.io/badge/Ollama-Offline_Ready-orange.svg" alt="Ollama Ready" />
 </p>
 
 ---

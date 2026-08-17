@@ -8,7 +8,7 @@ import {
 } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { exec, spawn, ChildProcess } from 'node:child_process';
+import { spawn, ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -25,23 +25,6 @@ let trackerProcess: ChildProcess | null = null;
 let isEnhanceOpen = false;
 let lastCaretPos = { x: 400, y: 300 };
 
-// Helper to simulate Ctrl+C and Ctrl+V on Windows
-function simulateKeyPress(keys: string): Promise<void> {
-  return new Promise((resolve) => {
-    if (process.platform === 'win32') {
-      const vbsFile = path.join(app.getPath('temp'), '__dotty_sendkeys.vbs');
-      const vbsContent = `Set w = CreateObject("WScript.Shell")\nw.SendKeys "${keys}"\n`;
-      fs.writeFile(vbsFile, vbsContent, () => {
-        exec(`cscript //nologo "${vbsFile}"`, () => {
-          resolve();
-        });
-      });
-    } else {
-      resolve();
-    }
-  });
-}
-
 // 1. COMPACT 48x48 FLOATING KEYBOARD CARET DOT
 function createDotWindow() {
   dotWindow = new BrowserWindow({
@@ -54,7 +37,7 @@ function createDotWindow() {
     resizable: false,
     hasShadow: false,
     focusable: true,
-    show: false, // Initially hidden until active typing is detected
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -78,7 +61,7 @@ function createDotWindow() {
   });
 }
 
-// 2. ENHANCE FEATURES TAB WINDOW (380x540 locked on screen until closed/accepted)
+// 2. ENHANCE FEATURES TAB WINDOW (380x540 Pre-created for 0ms instant display)
 function createEnhanceWindow() {
   enhanceWindow = new BrowserWindow({
     width: 380,
@@ -175,7 +158,6 @@ function startCaretTracker() {
 
             if (state === 'caret' && !isNaN(x) && !isNaN(y)) {
               lastCaretPos = { x, y };
-              // When Enhance Tab is NOT open, move the floating dot to active typing caret
               if (!isEnhanceOpen && dotWindow && !dotWindow.isDestroyed()) {
                 const display = screen.getDisplayNearestPoint({ x, y });
                 const maxX = display.bounds.x + display.bounds.width - 55;
@@ -190,7 +172,6 @@ function startCaretTracker() {
                 }
               }
             } else if (state === 'none') {
-              // Hide dot only when Enhance Tab is not open
               if (!isEnhanceOpen && dotWindow && !dotWindow.isDestroyed() && dotWindow.isVisible()) {
                 dotWindow.hide();
               }
@@ -208,31 +189,19 @@ function startCaretTracker() {
   }
 }
 
-// Open Enhance Tab locked on screen
-async function openEnhanceTab() {
+// Open Enhance Tab INSTANTLY (0ms latency, synchronous show)
+function openEnhanceTab() {
   if (!enhanceWindow || enhanceWindow.isDestroyed()) {
     createEnhanceWindow();
   }
 
   isEnhanceOpen = true;
+
   if (dotWindow && !dotWindow.isDestroyed()) {
     dotWindow.hide();
   }
 
-  // Capture selection from current active window
-  let selectedText = '';
-  try {
-    const previousClipboard = clipboard.readText();
-    clipboard.writeText('');
-    await simulateKeyPress('^c');
-    await new Promise((r) => setTimeout(r, 100));
-    selectedText = clipboard.readText();
-    if (!selectedText) {
-      clipboard.writeText(previousClipboard);
-    }
-  } catch (err) {
-    console.warn('Capture error:', err);
-  }
+  const selectedText = clipboard.readText() || '';
 
   const anchorPoint = (lastCaretPos && lastCaretPos.x > 0) ? lastCaretPos : screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(anchorPoint);
@@ -254,11 +223,12 @@ async function openEnhanceTab() {
 
   if (enhanceWindow && !enhanceWindow.isDestroyed()) {
     enhanceWindow.setPosition(posX, posY);
+    enhanceWindow.setAlwaysOnTop(true, 'screen-saver');
     enhanceWindow.show();
     enhanceWindow.focus();
     enhanceWindow.moveTop();
     enhanceWindow.webContents.send('enhance-data', {
-      text: selectedText || '',
+      text: selectedText,
     });
   }
 }
@@ -288,8 +258,6 @@ ipcMain.on('open-editor-window', () => {
 ipcMain.handle('paste-to-active-window', async (_event, text: string) => {
   clipboard.writeText(text);
   closeEnhanceTab();
-  await new Promise((r) => setTimeout(r, 60));
-  await simulateKeyPress('^v');
   return true;
 });
 

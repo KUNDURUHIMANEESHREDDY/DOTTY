@@ -95,6 +95,7 @@ export function App() {
   // =========================================================================
   if (route === 'enhance') {
     const [capturedText, setCapturedText] = useState<string>('');
+    const [customInput, setCustomInput] = useState<string>('');
     const [currentDiff, setCurrentDiff] = useState<DiffResult | null>(null);
     const [isProcessing, setIsProcessing] = useState(false);
     const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -115,21 +116,25 @@ export function App() {
     useEffect(() => {
       if (window.electronAPI?.onEnhanceData) {
         const unsubscribe = window.electronAPI.onEnhanceData((data: { text: string }) => {
-          setCapturedText(data.text || '');
+          if (data.text) {
+            setCapturedText(data.text);
+            setCustomInput(data.text);
+          }
           setCurrentDiff(null);
         });
         return unsubscribe;
       }
     }, []);
 
+    const activeTextToProcess = customInput.trim() || capturedText.trim();
+
     // Execute AI Action
     const handleExecuteAction = async (
       action: ActionType,
       options?: { tone?: ToneType; targetLanguage?: string; customPrompt?: string }
     ) => {
-      const textToProcess = capturedText.trim();
-      if (!textToProcess) {
-        addToast('warning', 'No Text Highlighted', 'Highlight some text in any window first, then click Dotty.');
+      if (!activeTextToProcess) {
+        addToast('warning', 'Type or Highlight Text', 'Enter or highlight text to process with AI.');
         return;
       }
 
@@ -137,7 +142,7 @@ export function App() {
       try {
         const result = await processTextWithAI({
           action,
-          text: textToProcess,
+          text: activeTextToProcess,
           tone: options?.tone,
           customPrompt: options?.customPrompt,
           targetLanguage: options?.targetLanguage,
@@ -154,19 +159,17 @@ export function App() {
     };
 
     return (
-      <div className="w-screen h-screen p-2 bg-transparent select-none flex flex-col">
+      <div className="w-screen h-screen p-2 bg-transparent select-none flex flex-col font-sans">
         <div className="w-full h-full bg-slate-900 border border-slate-700/90 rounded-2xl shadow-2xl flex flex-col overflow-hidden text-slate-100 backdrop-blur-2xl">
           {/* Header */}
           <div className="px-3.5 py-2.5 bg-slate-800/90 border-b border-slate-700/80 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
-              <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">Dotty AI</span>
-              {capturedText ? (
+              <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">Dotty AI Features</span>
+              {activeTextToProcess && (
                 <span className="text-[10px] bg-slate-950/80 text-sky-300 px-1.5 py-0.5 rounded border border-slate-700 font-mono">
-                  {capturedText.split(/\s+/).filter(Boolean).length} words selected
+                  {activeTextToProcess.split(/\s+/).filter(Boolean).length}w
                 </span>
-              ) : (
-                <span className="text-[10px] text-slate-400">Ready at Cursor</span>
               )}
             </div>
             <button
@@ -233,77 +236,90 @@ export function App() {
                 </div>
               </div>
             ) : (
-              /* Features Action Buttons */
-              <div className="space-y-1.5">
-                <button
-                  onClick={() => handleExecuteAction('grammar')}
-                  disabled={isProcessing}
-                  className="w-full px-3 py-2.5 rounded-xl text-left bg-slate-800/80 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-all group border border-slate-700/50 hover:border-slate-600"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-1.5 rounded-lg bg-emerald-500/15 text-emerald-400">
-                      <Sparkles className="w-4 h-4" />
+              /* Features Action Buttons & Input */
+              <div className="space-y-2">
+                {/* Text input area */}
+                <div>
+                  <textarea
+                    value={customInput}
+                    onChange={(e) => setCustomInput(e.target.value)}
+                    placeholder="Type or paste text to enhance..."
+                    rows={3}
+                    className="w-full px-2.5 py-2 text-xs bg-slate-950/80 border border-slate-700/80 rounded-xl text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500 font-mono resize-none"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <button
+                    onClick={() => handleExecuteAction('grammar')}
+                    disabled={isProcessing}
+                    className="w-full px-3 py-2.5 rounded-xl text-left bg-slate-800/80 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-all group border border-slate-700/50 hover:border-slate-600"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-1.5 rounded-lg bg-emerald-500/15 text-emerald-400">
+                        <Sparkles className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-semibold text-slate-100">Fix Grammar & Spelling</div>
+                        <div className="text-[10px] text-slate-400">Sub-4ms local zero-cloud correction</div>
+                      </div>
                     </div>
+                    <span className="text-[10px] font-mono text-slate-500 group-hover:text-slate-300">Alt+G</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleExecuteAction('enhance-prompt')}
+                    disabled={isProcessing}
+                    className="w-full px-3 py-2.5 rounded-xl text-left bg-slate-800/80 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-all group border border-slate-700/50 hover:border-slate-600"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-1.5 rounded-lg bg-sky-500/15 text-sky-400">
+                        <Sparkles className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-semibold text-slate-100">Enhance Prompt</div>
+                        <div className="text-[10px] text-slate-400">Role, context, constraints & output specs</div>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-mono text-slate-500 group-hover:text-slate-300">Alt+P</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleExecuteAction('tone', { tone: 'accessible' })}
+                    disabled={isProcessing}
+                    className="w-full px-3 py-2 rounded-xl text-left bg-slate-800/50 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-colors border border-transparent hover:border-slate-700/60"
+                  >
                     <div>
-                      <div className="text-xs font-semibold text-slate-100">Fix Grammar & Spelling</div>
-                      <div className="text-[10px] text-slate-400">Sub-4ms local zero-cloud correction</div>
+                      <div className="text-xs font-medium text-slate-200">🌿 Plain English (Accessible)</div>
+                      <div className="text-[10px] text-slate-400">Simplify bureaucratic jargon</div>
                     </div>
-                  </div>
-                  <span className="text-[10px] font-mono text-slate-500 group-hover:text-slate-300">Alt+G</span>
-                </button>
+                    <ArrowRight className="w-3.5 h-3.5 text-slate-500" />
+                  </button>
 
-                <button
-                  onClick={() => handleExecuteAction('enhance-prompt')}
-                  disabled={isProcessing}
-                  className="w-full px-3 py-2.5 rounded-xl text-left bg-slate-800/80 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-all group border border-slate-700/50 hover:border-slate-600"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-1.5 rounded-lg bg-sky-500/15 text-sky-400">
-                      <Sparkles className="w-4 h-4" />
-                    </div>
+                  <button
+                    onClick={() => handleExecuteAction('tone', { tone: 'professional' })}
+                    disabled={isProcessing}
+                    className="w-full px-3 py-2 rounded-xl text-left bg-slate-800/50 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-colors border border-transparent hover:border-slate-700/60"
+                  >
                     <div>
-                      <div className="text-xs font-semibold text-slate-100">Enhance Prompt</div>
-                      <div className="text-[10px] text-slate-400">Role, context, constraints & output specs</div>
+                      <div className="text-xs font-medium text-slate-200">💼 Professional Tone</div>
+                      <div className="text-[10px] text-slate-400">Polished executive phrasing</div>
                     </div>
-                  </div>
-                  <span className="text-[10px] font-mono text-slate-500 group-hover:text-slate-300">Alt+P</span>
-                </button>
+                    <ArrowRight className="w-3.5 h-3.5 text-slate-500" />
+                  </button>
 
-                <button
-                  onClick={() => handleExecuteAction('tone', { tone: 'accessible' })}
-                  disabled={isProcessing}
-                  className="w-full px-3 py-2 rounded-xl text-left bg-slate-800/50 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-colors border border-transparent hover:border-slate-700/60"
-                >
-                  <div>
-                    <div className="text-xs font-medium text-slate-200">🌿 Plain English (Accessible)</div>
-                    <div className="text-[10px] text-slate-400">Simplify bureaucratic jargon</div>
-                  </div>
-                  <ArrowRight className="w-3.5 h-3.5 text-slate-500" />
-                </button>
-
-                <button
-                  onClick={() => handleExecuteAction('tone', { tone: 'professional' })}
-                  disabled={isProcessing}
-                  className="w-full px-3 py-2 rounded-xl text-left bg-slate-800/50 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-colors border border-transparent hover:border-slate-700/60"
-                >
-                  <div>
-                    <div className="text-xs font-medium text-slate-200">💼 Professional Tone</div>
-                    <div className="text-[10px] text-slate-400">Polished executive phrasing</div>
-                  </div>
-                  <ArrowRight className="w-3.5 h-3.5 text-slate-500" />
-                </button>
-
-                <button
-                  onClick={() => handleExecuteAction('summarize')}
-                  disabled={isProcessing}
-                  className="w-full px-3 py-2 rounded-xl text-left bg-slate-800/50 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-colors border border-transparent hover:border-slate-700/60"
-                >
-                  <div>
-                    <div className="text-xs font-medium text-slate-200">📋 Summarize Key Takeaways</div>
-                    <div className="text-[10px] text-slate-400">Extract bullet points offline</div>
-                  </div>
-                  <ArrowRight className="w-3.5 h-3.5 text-slate-500" />
-                </button>
+                  <button
+                    onClick={() => handleExecuteAction('summarize')}
+                    disabled={isProcessing}
+                    className="w-full px-3 py-2 rounded-xl text-left bg-slate-800/50 hover:bg-slate-800 text-slate-100 flex items-center justify-between transition-colors border border-transparent hover:border-slate-700/60"
+                  >
+                    <div>
+                      <div className="text-xs font-medium text-slate-200">📋 Summarize Key Takeaways</div>
+                      <div className="text-[10px] text-slate-400">Extract bullet points offline</div>
+                    </div>
+                    <ArrowRight className="w-3.5 h-3.5 text-slate-500" />
+                  </button>
+                </div>
               </div>
             )}
           </div>

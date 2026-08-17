@@ -18,23 +18,22 @@ if (process.platform === 'win32') {
   app.setAppUserModelId('com.dotty.app');
 }
 
-let dotWindow: BrowserWindow | null = null;
-let enhanceWindow: BrowserWindow | null = null;
+let widgetWindow: BrowserWindow | null = null;
 let editorWindow: BrowserWindow | null = null;
 let trackerProcess: ChildProcess | null = null;
-let isEnhanceOpen = false;
+let isExpanded = false;
 let lastCaretPos = { x: 400, y: 300 };
 
-// 1. COMPACT 48x48 FLOATING KEYBOARD CARET DOT
-function createDotWindow() {
-  dotWindow = new BrowserWindow({
+// 1. SINGLE EXPANDING WIDGET WINDOW (48x48 Dot <---> 380x540 Enhance Tab in ONE Window)
+function createWidgetWindow() {
+  widgetWindow = new BrowserWindow({
     width: 48,
     height: 48,
     transparent: true,
     frame: false,
     alwaysOnTop: true,
     skipTaskbar: true,
-    resizable: false,
+    resizable: true, // Must be true for dynamic expansion on Windows
     hasShadow: false,
     focusable: true,
     show: false,
@@ -46,58 +45,22 @@ function createDotWindow() {
     },
   });
 
-  dotWindow.setAlwaysOnTop(true, 'screen-saver');
-  dotWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  widgetWindow.setAlwaysOnTop(true, 'screen-saver');
+  widgetWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
   if (devServerUrl) {
-    dotWindow.loadURL(`${devServerUrl}#dot`);
+    widgetWindow.loadURL(devServerUrl);
   } else {
-    dotWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'dot' });
+    widgetWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 
-  dotWindow.on('closed', () => {
-    dotWindow = null;
+  widgetWindow.on('closed', () => {
+    widgetWindow = null;
   });
 }
 
-// 2. ENHANCE FEATURES TAB WINDOW (380x540 Pre-created for 0ms instant display)
-function createEnhanceWindow() {
-  enhanceWindow = new BrowserWindow({
-    width: 380,
-    height: 540,
-    transparent: true,
-    frame: false,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    resizable: false,
-    hasShadow: true,
-    focusable: true,
-    show: false,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      nodeIntegration: false,
-      contextIsolation: true,
-      spellcheck: false,
-    },
-  });
-
-  enhanceWindow.setAlwaysOnTop(true, 'screen-saver');
-  enhanceWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-
-  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
-  if (devServerUrl) {
-    enhanceWindow.loadURL(`${devServerUrl}#enhance`);
-  } else {
-    enhanceWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'enhance' });
-  }
-
-  enhanceWindow.on('closed', () => {
-    enhanceWindow = null;
-  });
-}
-
-// 3. STANDALONE FULL NOTEPAD SCRATCHPAD WINDOW
+// 2. STANDALONE FULL NOTEPAD SCRATCHPAD WINDOW
 function createEditorWindow() {
   if (editorWindow && !editorWindow.isDestroyed()) {
     editorWindow.show();
@@ -133,7 +96,7 @@ function createEditorWindow() {
   });
 }
 
-// 4. REAL-TIME NATIVE KEYBOARD CARET TRACKER
+// 3. REAL-TIME NATIVE KEYBOARD CARET TRACKER
 function startCaretTracker() {
   const isDev = !app.isPackaged;
   const trackerExecutable = isDev
@@ -158,7 +121,8 @@ function startCaretTracker() {
 
             if (state === 'caret' && !isNaN(x) && !isNaN(y)) {
               lastCaretPos = { x, y };
-              if (!isEnhanceOpen && dotWindow && !dotWindow.isDestroyed()) {
+              // When NOT expanded, move the 48x48 dot to active keyboard insertion point
+              if (!isExpanded && widgetWindow && !widgetWindow.isDestroyed()) {
                 const display = screen.getDisplayNearestPoint({ x, y });
                 const maxX = display.bounds.x + display.bounds.width - 55;
                 const maxY = display.bounds.y + display.bounds.height - 55;
@@ -166,14 +130,21 @@ function startCaretTracker() {
                 const targetX = Math.min(Math.max(x + 10, display.bounds.x + 5), maxX);
                 const targetY = Math.min(Math.max(y + 2, display.bounds.y + 5), maxY);
 
-                dotWindow.setPosition(targetX, targetY);
-                if (!dotWindow.isVisible()) {
-                  dotWindow.showInactive();
+                widgetWindow.setBounds({
+                  x: targetX,
+                  y: targetY,
+                  width: 48,
+                  height: 48,
+                });
+
+                if (!widgetWindow.isVisible()) {
+                  widgetWindow.showInactive();
                 }
               }
             } else if (state === 'none') {
-              if (!isEnhanceOpen && dotWindow && !dotWindow.isDestroyed() && dotWindow.isVisible()) {
-                dotWindow.hide();
+              // Hide only if NOT expanded
+              if (!isExpanded && widgetWindow && !widgetWindow.isDestroyed() && widgetWindow.isVisible()) {
+                widgetWindow.hide();
               }
             }
           }
@@ -189,19 +160,9 @@ function startCaretTracker() {
   }
 }
 
-// Open Enhance Tab INSTANTLY (0ms latency, synchronous show)
-function openEnhanceTab() {
-  if (!enhanceWindow || enhanceWindow.isDestroyed()) {
-    createEnhanceWindow();
-  }
-
-  isEnhanceOpen = true;
-
-  if (dotWindow && !dotWindow.isDestroyed()) {
-    dotWindow.hide();
-  }
-
-  const selectedText = clipboard.readText() || '';
+// Expand Widget Window into Full 380x540 Enhance Tab
+function expandWidget() {
+  isExpanded = true;
 
   const anchorPoint = (lastCaretPos && lastCaretPos.x > 0) ? lastCaretPos : screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(anchorPoint);
@@ -221,59 +182,76 @@ function openEnhanceTab() {
     posY = display.bounds.y + 10;
   }
 
-  if (enhanceWindow && !enhanceWindow.isDestroyed()) {
-    enhanceWindow.setPosition(posX, posY);
-    enhanceWindow.setAlwaysOnTop(true, 'screen-saver');
-    enhanceWindow.show();
-    enhanceWindow.focus();
-    enhanceWindow.moveTop();
-    enhanceWindow.webContents.send('enhance-data', {
-      text: selectedText,
+  if (widgetWindow && !widgetWindow.isDestroyed()) {
+    widgetWindow.setBounds({
+      x: posX,
+      y: posY,
+      width: menuWidth,
+      height: menuHeight,
+    });
+    widgetWindow.show();
+    widgetWindow.focus();
+  }
+}
+
+// Collapse Widget Window back to 48x48 Dot
+function collapseWidget() {
+  isExpanded = false;
+  if (widgetWindow && !widgetWindow.isDestroyed()) {
+    const display = screen.getDisplayNearestPoint(lastCaretPos);
+    const maxX = display.bounds.x + display.bounds.width - 55;
+    const maxY = display.bounds.y + display.bounds.height - 55;
+
+    const targetX = Math.min(Math.max(lastCaretPos.x + 10, display.bounds.x + 5), maxX);
+    const targetY = Math.min(Math.max(lastCaretPos.y + 2, display.bounds.y + 5), maxY);
+
+    widgetWindow.setBounds({
+      x: targetX,
+      y: targetY,
+      width: 48,
+      height: 48,
     });
   }
 }
 
-// Close Enhance Tab
-function closeEnhanceTab() {
-  isEnhanceOpen = false;
-  if (enhanceWindow && !enhanceWindow.isDestroyed()) {
-    enhanceWindow.hide();
-  }
-}
-
 // IPC Handlers
-ipcMain.on('open-enhance-tab', () => {
-  openEnhanceTab();
+ipcMain.on('expand-window', () => {
+  expandWidget();
 });
 
-ipcMain.on('close-enhance-tab', () => {
-  closeEnhanceTab();
+ipcMain.on('collapse-window', () => {
+  collapseWidget();
 });
 
 ipcMain.on('open-editor-window', () => {
-  closeEnhanceTab();
+  collapseWidget();
   createEditorWindow();
+});
+
+ipcMain.handle('get-clipboard-text', () => {
+  return clipboard.readText() || '';
 });
 
 ipcMain.handle('paste-to-active-window', async (_event, text: string) => {
   clipboard.writeText(text);
-  closeEnhanceTab();
+  collapseWidget();
   return true;
 });
 
 app.whenReady().then(() => {
-  createDotWindow();
-  createEnhanceWindow();
+  createWidgetWindow();
   startCaretTracker();
 
   // Global Hotkey (Alt+Space or Ctrl+Shift+Space)
   try {
     globalShortcut.register('Alt+Space', () => {
-      openEnhanceTab();
+      expandWidget();
+      widgetWindow?.webContents.send('trigger-expand');
     });
 
     globalShortcut.register('CommandOrControl+Shift+Space', () => {
-      openEnhanceTab();
+      expandWidget();
+      widgetWindow?.webContents.send('trigger-expand');
     });
   } catch (err) {
     console.warn('Global shortcut registration failed:', err);

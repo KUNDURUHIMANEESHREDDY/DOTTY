@@ -3,31 +3,27 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
 
-  // Open the floating Enhance Features tab on click
-  openEnhanceTab: () => {
-    ipcRenderer.send('open-enhance-tab');
+  // Expand widget window to 380x540
+  expandWindow: () => {
+    ipcRenderer.send('expand-window');
   },
 
-  // Close Enhance Features tab
-  closeEnhanceTab: () => {
-    ipcRenderer.send('close-enhance-tab');
+  // Collapse widget window back to 48x48
+  collapseWindow: () => {
+    ipcRenderer.send('collapse-window');
   },
 
-  // Listen for text loaded into the Enhance tab
-  onEnhanceData: (callback: (data: { text: string }) => void) => {
-    const listener = (_event: any, data: any) => callback(data);
-    ipcRenderer.on('enhance-data', listener);
-    return () => {
-      ipcRenderer.removeListener('enhance-data', listener);
-    };
+  // Read clipboard text
+  getClipboardText: () => {
+    return ipcRenderer.invoke('get-clipboard-text');
   },
 
-  // Paste enhanced text into active external window (Ctrl+V)
+  // Paste text to active window
   pasteToActiveWindow: (text: string) => {
     return ipcRenderer.invoke('paste-to-active-window', text);
   },
 
-  // Open full standalone notepad editor
+  // Open standalone notepad
   openEditorWindow: () => {
     ipcRenderer.send('open-editor-window');
   },

@@ -6,9 +6,9 @@ declare global {
   interface Window {
     electronAPI?: {
       platform: string;
-      openEnhanceTab: () => void;
-      closeEnhanceTab: () => void;
-      onEnhanceData?: (callback: (data: { text: string }) => void) => () => void;
+      expandWindow: () => void;
+      collapseWindow: () => void;
+      getClipboardText: () => Promise<string>;
       pasteToActiveWindow: (text: string) => Promise<boolean>;
       openEditorWindow: () => void;
     };

@@ -36,128 +36,122 @@ write a python script for scraping news headlines
 Use the AI Action Menu or header buttons to transform text!`;
 
 export function App() {
-  const [route, setRoute] = useState<string>(() => window.location.hash.replace('#', '') || 'editor');
-
-  useEffect(() => {
-    const handleHashChange = () => {
-      setRoute(window.location.hash.replace('#', '') || 'editor');
-    };
-    window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
-  }, []);
-
+  const isDedicatedEditor = window.location.hash === '#editor';
   const [settings, setSettings] = useLocalStorage<AppSettings>('dotty_settings_v1', DEFAULT_SETTINGS);
 
   // =========================================================================
-  // VIEW 1: #dot — FLOATING 48x48 KEYBOARD CARET DOT
+  // VIEW 1: SINGLE EXPANDING DESKTOP WIDGET (Dot Mode <---> Enhance Tab Mode)
   // =========================================================================
-  if (route === 'dot') {
-    return (
-      <div
-        className="w-full h-full flex items-center justify-center bg-transparent select-none cursor-pointer p-1"
-        onMouseDown={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          window.electronAPI?.openEnhanceTab();
-        }}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          window.electronAPI?.openEnhanceTab();
-        }}
-        title="Dotty AI Assistant (Click to open Features Tab or Alt+Space)"
-      >
-        <div className="relative group flex items-center justify-center pointer-events-auto">
-          {/* Subtle Outer Glow Ring */}
-          <div
-            className="absolute -inset-1 rounded-full opacity-70 animate-ping pointer-events-none"
-            style={{ backgroundColor: settings.dot.color || '#38bdf8' }}
-          />
+  const [isExpanded, setIsExpanded] = useState<boolean>(false);
+  const [customInput, setCustomInput] = useState<string>('');
+  const [currentDiff, setCurrentDiff] = useState<DiffResult | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
-          {/* Glowing Interactive Dot Bubble */}
-          <div
-            className="relative w-8 h-8 rounded-full flex items-center justify-center shadow-2xl transition-all transform group-hover:scale-110 active:scale-95 cursor-pointer"
-            style={{
-              backgroundColor: '#0f172a',
-              border: `2px solid ${settings.dot.color || '#38bdf8'}`,
-              boxShadow: `0 0 18px 3px ${settings.dot.color || '#38bdf8'}aa`,
-            }}
-          >
-            <Sparkles className="w-4 h-4 text-sky-400 animate-pulse pointer-events-none" />
+  const addToast = (type: ToastMessage['type'], title: string, description?: string) => {
+    const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    setToasts((prev) => [...prev, { id, type, title, description }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  };
+
+  const removeToast = (id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  };
+
+  const handleExpand = async () => {
+    setIsExpanded(true);
+    window.electronAPI?.expandWindow();
+    try {
+      const clipText = await window.electronAPI?.getClipboardText();
+      if (clipText && clipText.trim().length > 0) {
+        setCustomInput(clipText);
+      }
+    } catch {
+      // Ignored
+    }
+  };
+
+  const handleCollapse = () => {
+    setIsExpanded(false);
+    setCurrentDiff(null);
+    window.electronAPI?.collapseWindow();
+  };
+
+  // Execute AI Action on input
+  const handleExecuteAction = async (
+    action: ActionType,
+    options?: { tone?: ToneType; targetLanguage?: string; customPrompt?: string }
+  ) => {
+    const textToProcess = customInput.trim();
+    if (!textToProcess) {
+      addToast('warning', 'Enter or Copy Text', 'Type or paste text to enhance with AI.');
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      const result = await processTextWithAI({
+        action,
+        text: textToProcess,
+        tone: options?.tone,
+        customPrompt: options?.customPrompt,
+        targetLanguage: options?.targetLanguage,
+        settings: settings.ai,
+        customRules: settings.customRules,
+      });
+
+      setCurrentDiff(result);
+    } catch (err: any) {
+      addToast('error', 'Action Failed', err.message || 'Error executing action.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  if (!isDedicatedEditor) {
+    if (!isExpanded) {
+      // 48x48 Glowing Dot Mode
+      return (
+        <div
+          className="w-full h-full flex items-center justify-center bg-transparent select-none cursor-pointer p-1"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleExpand();
+          }}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleExpand();
+          }}
+          title="Dotty AI Assistant (Click to open Features Tab or Alt+Space)"
+        >
+          <div className="relative group flex items-center justify-center pointer-events-auto">
+            {/* Subtle Outer Glow Ring */}
+            <div
+              className="absolute -inset-1 rounded-full opacity-70 animate-ping pointer-events-none"
+              style={{ backgroundColor: settings.dot.color || '#38bdf8' }}
+            />
+
+            {/* Glowing Interactive Dot Bubble */}
+            <div
+              className="relative w-8 h-8 rounded-full flex items-center justify-center shadow-2xl transition-all transform group-hover:scale-110 active:scale-95 cursor-pointer"
+              style={{
+                backgroundColor: '#0f172a',
+                border: `2px solid ${settings.dot.color || '#38bdf8'}`,
+                boxShadow: `0 0 18px 3px ${settings.dot.color || '#38bdf8'}aa`,
+              }}
+            >
+              <Sparkles className="w-4 h-4 text-sky-400 animate-pulse pointer-events-none" />
+            </div>
           </div>
         </div>
-      </div>
-    );
-  }
+      );
+    }
 
-  // =========================================================================
-  // VIEW 2: #enhance — COMPLETE FLOATING ENHANCE FEATURES TAB (380x540)
-  // =========================================================================
-  if (route === 'enhance') {
-    const [capturedText, setCapturedText] = useState<string>('');
-    const [customInput, setCustomInput] = useState<string>('');
-    const [currentDiff, setCurrentDiff] = useState<DiffResult | null>(null);
-    const [isProcessing, setIsProcessing] = useState(false);
-    const [toasts, setToasts] = useState<ToastMessage[]>([]);
-
-    const addToast = (type: ToastMessage['type'], title: string, description?: string) => {
-      const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-      setToasts((prev) => [...prev, { id, type, title, description }]);
-      setTimeout(() => {
-        setToasts((prev) => prev.filter((t) => t.id !== id));
-      }, 4000);
-    };
-
-    const removeToast = (id: string) => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    };
-
-    // Listen for text sent from main process
-    useEffect(() => {
-      if (window.electronAPI?.onEnhanceData) {
-        const unsubscribe = window.electronAPI.onEnhanceData((data: { text: string }) => {
-          if (data.text) {
-            setCapturedText(data.text);
-            setCustomInput(data.text);
-          }
-          setCurrentDiff(null);
-        });
-        return unsubscribe;
-      }
-    }, []);
-
-    const activeTextToProcess = customInput.trim() || capturedText.trim();
-
-    // Execute AI Action
-    const handleExecuteAction = async (
-      action: ActionType,
-      options?: { tone?: ToneType; targetLanguage?: string; customPrompt?: string }
-    ) => {
-      if (!activeTextToProcess) {
-        addToast('warning', 'Type or Highlight Text', 'Enter or highlight text to process with AI.');
-        return;
-      }
-
-      setIsProcessing(true);
-      try {
-        const result = await processTextWithAI({
-          action,
-          text: activeTextToProcess,
-          tone: options?.tone,
-          customPrompt: options?.customPrompt,
-          targetLanguage: options?.targetLanguage,
-          settings: settings.ai,
-          customRules: settings.customRules,
-        });
-
-        setCurrentDiff(result);
-      } catch (err: any) {
-        addToast('error', 'Action Failed', err.message || 'Error executing action.');
-      } finally {
-        setIsProcessing(false);
-      }
-    };
-
+    // 380x540 Expanded Enhance Features Tab Mode
     return (
       <div className="w-screen h-screen p-2 bg-transparent select-none flex flex-col font-sans">
         <div className="w-full h-full bg-slate-900 border border-slate-700/90 rounded-2xl shadow-2xl flex flex-col overflow-hidden text-slate-100 backdrop-blur-2xl">
@@ -166,14 +160,14 @@ export function App() {
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
               <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">Dotty AI Features</span>
-              {activeTextToProcess && (
+              {customInput.trim() && (
                 <span className="text-[10px] bg-slate-950/80 text-sky-300 px-1.5 py-0.5 rounded border border-slate-700 font-mono">
-                  {activeTextToProcess.split(/\s+/).filter(Boolean).length}w
+                  {customInput.trim().split(/\s+/).filter(Boolean).length}w
                 </span>
               )}
             </div>
             <button
-              onClick={() => window.electronAPI?.closeEnhanceTab()}
+              onClick={handleCollapse}
               className="p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
               title="Close Tab (Esc)"
             >
@@ -208,7 +202,7 @@ export function App() {
                       if (window.electronAPI) {
                         await window.electronAPI.pasteToActiveWindow(currentDiff.enhancedText);
                       }
-                      setCurrentDiff(null);
+                      handleCollapse();
                     }}
                     className="flex-1 py-2.5 bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 shadow-lg shadow-sky-500/25 transition-all active:scale-98"
                   >
@@ -278,7 +272,7 @@ export function App() {
                       </div>
                       <div>
                         <div className="text-xs font-semibold text-slate-100">Enhance Prompt</div>
-                        <div className="text-[10px] text-slate-400">Role, context, constraints & output specs</div>
+                        <div className="text-[10px] text-slate-400">Role, context, constraints & specs</div>
                       </div>
                     </div>
                     <span className="text-[10px] font-mono text-slate-500 group-hover:text-slate-300">Alt+P</span>
@@ -327,7 +321,10 @@ export function App() {
           {/* Footer: Open Notepad link */}
           <div className="px-3.5 py-2 bg-slate-950 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
             <button
-              onClick={() => window.electronAPI?.openEditorWindow()}
+              onClick={() => {
+                handleCollapse();
+                window.electronAPI?.openEditorWindow();
+              }}
               className="flex items-center gap-1.5 text-sky-400 hover:text-sky-300 font-medium transition-colors"
             >
               <Edit3 className="w-3.5 h-3.5" />
@@ -346,7 +343,7 @@ export function App() {
   }
 
   // =========================================================================
-  // VIEW 3: #editor (or Default) — STANDALONE FULL NOTEPAD SCRATCHPAD
+  // VIEW 2: #editor — STANDALONE FULL NOTEPAD SCRATCHPAD
   // =========================================================================
   const [tabs, setTabs] = useLocalStorage<DocumentTab[]>('dotty_tabs_v1', [
     {
@@ -373,27 +370,14 @@ export function App() {
 
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ x: 200, y: 200 });
-  const [currentDiff, setCurrentDiff] = useState<DiffResult | null>(null);
+  const [editorDiff, setEditorDiff] = useState<DiffResult | null>(null);
   const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [isEditorProcessing, setIsEditorProcessing] = useState(false);
   const [dotStatus, setDotStatus] = useState<'idle' | 'processing' | 'success' | 'error'>('idle');
-  const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
-  const addToast = (type: ToastMessage['type'], title: string, description?: string) => {
-    const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-    setToasts((prev) => [...prev, { id, type, title, description }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4000);
-  };
-
-  const removeToast = (id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  };
-
-  const executeAction = async (
+  const executeEditorAction = async (
     action: ActionType,
     options?: { tone?: ToneType; targetLanguage?: string; customPrompt?: string }
   ) => {
@@ -419,7 +403,7 @@ export function App() {
       return;
     }
 
-    setIsProcessing(true);
+    setIsEditorProcessing(true);
     setDotStatus('processing');
 
     try {
@@ -434,7 +418,7 @@ export function App() {
       });
 
       result.range = range;
-      setCurrentDiff(result);
+      setEditorDiff(result);
       setIsDiffModalOpen(true);
       setDotStatus('success');
       setTimeout(() => setDotStatus('idle'), 2000);
@@ -443,17 +427,17 @@ export function App() {
       setTimeout(() => setDotStatus('idle'), 3000);
       addToast('error', 'Action Failed', err.message || 'An error occurred during AI processing.');
     } finally {
-      setIsProcessing(false);
+      setIsEditorProcessing(false);
     }
   };
 
   const handleAcceptDiff = async (enhancedText: string, applyToSelectionOnly: boolean) => {
     setIsDiffModalOpen(false);
-    if (!currentDiff) return;
+    if (!editorDiff) return;
 
     let nextContent = content;
-    if (applyToSelectionOnly && currentDiff.range) {
-      const { start, end } = currentDiff.range;
+    if (applyToSelectionOnly && editorDiff.range) {
+      const { start, end } = editorDiff.range;
       nextContent = content.substring(0, start) + enhancedText + content.substring(end);
     } else {
       nextContent = enhancedText;
@@ -464,8 +448,8 @@ export function App() {
       prev.map((t) => (t.id === activeTab.id ? { ...t, content: nextContent, updatedAt: Date.now() } : t))
     );
 
-    addToast('success', 'Changes Applied', `Updated via ${currentDiff.action}.`);
-    setCurrentDiff(null);
+    addToast('success', 'Changes Applied', `Updated via ${editorDiff.action}.`);
+    setEditorDiff(null);
 
     requestAnimationFrame(() => {
       editorRef.current?.focus();
@@ -473,18 +457,13 @@ export function App() {
     });
   };
 
-  const handleDotClick = () => {
-    setMenuPosition({ x: localCaretPosition.x, y: localCaretPosition.y });
-    setIsActionMenuOpen(true);
-  };
-
   useKeyboardShortcuts({
     onTriggerMenu: () => {
       setMenuPosition({ x: localCaretPosition.x, y: localCaretPosition.y });
       setIsActionMenuOpen(true);
     },
-    onFixGrammar: () => executeAction('grammar'),
-    onEnhancePrompt: () => executeAction('enhance-prompt'),
+    onFixGrammar: () => executeEditorAction('grammar'),
+    onEnhancePrompt: () => executeEditorAction('enhance-prompt'),
     onUndo: () => {
       const prev = undo();
       if (prev !== null) setTabs((t) => t.map((tab) => (tab.id === activeTab.id ? { ...tab, content: prev } : tab)));
@@ -537,8 +516,8 @@ export function App() {
           const next = redo();
           if (next !== null) setTabs((t) => t.map((tab) => (tab.id === activeTab.id ? { ...tab, content: next } : tab)));
         }}
-        onQuickGrammar={() => executeAction('grammar')}
-        onQuickEnhance={() => executeAction('enhance-prompt')}
+        onQuickGrammar={() => executeEditorAction('grammar')}
+        onQuickEnhance={() => executeEditorAction('enhance-prompt')}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenTemplates={() => setIsTemplatesOpen(true)}
         onExport={(format) => {
@@ -570,9 +549,12 @@ export function App() {
         <CaretDot
           position={localCaretPosition}
           settings={settings.dot}
-          isProcessing={isProcessing}
+          isProcessing={isEditorProcessing}
           status={dotStatus}
-          onClick={handleDotClick}
+          onClick={() => {
+            setMenuPosition({ x: localCaretPosition.x, y: localCaretPosition.y });
+            setIsActionMenuOpen(true);
+          }}
         />
 
         <ActionMenu
@@ -583,7 +565,7 @@ export function App() {
           totalText={content}
           activeGrammarProvider={settings.ai.activeGrammarProvider}
           activePromptProvider={settings.ai.activePromptProvider}
-          onSelectAction={executeAction}
+          onSelectAction={executeEditorAction}
           onClose={() => setIsActionMenuOpen(false)}
           onOpenSettings={() => {
             setIsActionMenuOpen(false);
@@ -601,8 +583,8 @@ export function App() {
 
       <DiffModal
         isOpen={isDiffModalOpen}
-        diffResult={currentDiff}
-        hasSelection={Boolean(currentDiff?.range)}
+        diffResult={editorDiff}
+        hasSelection={Boolean(editorDiff?.range)}
         onAccept={handleAcceptDiff}
         onReject={() => setIsDiffModalOpen(false)}
         onCopy={(text) => {

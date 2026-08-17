@@ -6,14 +6,12 @@ declare global {
   interface Window {
     electronAPI?: {
       platform: string;
-      onMenuTrigger?: (callback: (data: { selectedText: string; x: number; y: number }) => void) => () => void;
-      openMenuWindow: () => void;
-      closeMenuWindow: () => void;
-      openEditorWindow: () => void;
+      expandToMenu: () => void;
+      collapseToDot: () => void;
+      onMenuData?: (callback: (data: { selectedText: string }) => void) => () => void;
       captureActiveSelection: () => Promise<string>;
       pasteToActiveWindow: (text: string) => Promise<boolean>;
-      setIgnoreMouseEvents?: (ignore: boolean, options?: { forward: boolean }) => void;
-      onGlobalCursorMove?: (callback: (point: { x: number; y: number }) => void) => () => void;
+      openEditorWindow: () => void;
     };
   }
 }

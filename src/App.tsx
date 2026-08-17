@@ -10,8 +10,6 @@ import { processTextWithAI } from './services/aiService';
 import { Header } from './components/Header';
 import { Editor } from './components/Editor';
 import { CaretDot } from './components/CaretDot';
-import { ActionMenu } from './components/ActionMenu';
-import { DiffModal } from './components/DiffModal';
 import { SettingsModal } from './components/SettingsModal';
 import { QuickTemplatesModal } from './components/QuickTemplatesModal';
 import { StatsBar } from './components/StatsBar';
@@ -36,15 +34,7 @@ write a python script for scraping news headlines
 Click the floating dot anytime in any application (Chrome, Word, VS Code) to transform text!`;
 
 export function App() {
-  const [route, setRoute] = useState<string>(() => window.location.hash.replace('#', '') || 'editor');
-
-  useEffect(() => {
-    const handleHashChange = () => {
-      setRoute(window.location.hash.replace('#', '') || 'editor');
-    };
-    window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
-  }, []);
+  const isDedicatedEditor = window.location.hash === '#editor';
 
   // 1. Settings & Persistence
   const [settings, setSettings] = useLocalStorage<AppSettings>('dotty_settings_v1', DEFAULT_SETTINGS);
@@ -72,7 +62,8 @@ export function App() {
   const { content, pushState, undo, redo, canUndo, canRedo, resetHistory } = useUndoRedo(activeTab.content);
   const { caretPosition: localCaretPosition, updateCaretPosition } = useCaretPosition(editorRef);
 
-  // 3. Floating Menu State (for #menu mode)
+  // 3. Expanding Widget State (Dot <---> Menu)
+  const [widgetView, setWidgetView] = useState<'dot' | 'menu'>('dot');
   const [capturedText, setCapturedText] = useState<string>('');
   const [currentDiff, setCurrentDiff] = useState<DiffResult | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -92,37 +83,29 @@ export function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Immediate Click Capture for #dot route
+  // Expand / Collapse Handlers
+  const handleOpenMenu = () => {
+    setWidgetView('menu');
+    window.electronAPI?.expandToMenu();
+  };
+
+  const handleCloseMenu = () => {
+    setWidgetView('dot');
+    setCurrentDiff(null);
+    window.electronAPI?.collapseToDot();
+  };
+
+  // Listen for menu data from main process (e.g. from Alt+Space or expandToMenu)
   useEffect(() => {
-    if (route === 'dot') {
-      const handleTrigger = (e: Event) => {
-        e.preventDefault();
-        e.stopPropagation();
-        window.electronAPI?.openMenuWindow();
-      };
-
-      window.addEventListener('click', handleTrigger, true);
-      window.addEventListener('mousedown', handleTrigger, true);
-      window.addEventListener('pointerdown', handleTrigger, true);
-
-      return () => {
-        window.removeEventListener('click', handleTrigger, true);
-        window.removeEventListener('mousedown', handleTrigger, true);
-        window.removeEventListener('pointerdown', handleTrigger, true);
-      };
-    }
-  }, [route]);
-
-  // Listen for Menu Trigger data from main process in #menu mode
-  useEffect(() => {
-    if (window.electronAPI?.onMenuTrigger && route === 'menu') {
-      const unsubscribe = window.electronAPI.onMenuTrigger((data: { selectedText: string; x: number; y: number }) => {
+    if (window.electronAPI?.onMenuData && !isDedicatedEditor) {
+      const unsubscribe = window.electronAPI.onMenuData((data: { selectedText: string }) => {
         setCapturedText(data.selectedText || '');
         setCurrentDiff(null);
+        setWidgetView('menu');
       });
       return unsubscribe;
     }
-  }, [route]);
+  }, [isDedicatedEditor]);
 
   // Execute AI action on captured text
   const handleExecuteActionOnCaptured = async (
@@ -156,49 +139,49 @@ export function App() {
   };
 
   // =========================================================================
-  // ROUTE 1: #dot — FLOATING KEYBOARD CARET DOT BUBBLE (Instant Click)
+  // VIEW 1: EXPANDING DESKTOP WIDGET (Dot State OR Features Menu State)
   // =========================================================================
-  if (route === 'dot') {
-    return (
-      <div
-        className="w-full h-full flex items-center justify-center bg-transparent select-none cursor-pointer p-1"
-        onMouseDown={(e) => {
-          e.preventDefault();
-          window.electronAPI?.openMenuWindow();
-        }}
-        onClick={(e) => {
-          e.preventDefault();
-          window.electronAPI?.openMenuWindow();
-        }}
-        title="Dotty AI Assistant (Click or Alt+Space)"
-      >
-        <div className="relative group flex items-center justify-center pointer-events-auto">
-          {/* Subtle Outer Glow Ring */}
-          <div
-            className="absolute -inset-1 rounded-full opacity-70 animate-ping"
-            style={{ backgroundColor: settings.dot.color || '#38bdf8' }}
-          />
+  if (!isDedicatedEditor) {
+    if (widgetView === 'dot') {
+      return (
+        <div
+          className="w-full h-full flex items-center justify-center bg-transparent select-none cursor-pointer p-1"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleOpenMenu();
+          }}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleOpenMenu();
+          }}
+          title="Dotty AI Assistant (Click to open Features Tab or Alt+Space)"
+        >
+          <div className="relative group flex items-center justify-center pointer-events-auto">
+            {/* Pulsing Outer Ring */}
+            <div
+              className="absolute -inset-1 rounded-full opacity-70 animate-ping pointer-events-none"
+              style={{ backgroundColor: settings.dot.color || '#38bdf8' }}
+            />
 
-          {/* Main Interactive Bubble */}
-          <div
-            className="relative w-8 h-8 rounded-full flex items-center justify-center shadow-2xl transition-all transform group-hover:scale-110 active:scale-95 cursor-pointer"
-            style={{
-              backgroundColor: '#0f172a',
-              border: `2px solid ${settings.dot.color || '#38bdf8'}`,
-              boxShadow: `0 0 18px 3px ${settings.dot.color || '#38bdf8'}aa`,
-            }}
-          >
-            <Sparkles className="w-4 h-4 text-sky-400 animate-pulse pointer-events-none" />
+            {/* Glowing Interactive Dot Bubble */}
+            <div
+              className="relative w-8 h-8 rounded-full flex items-center justify-center shadow-2xl transition-all transform group-hover:scale-110 active:scale-95 cursor-pointer"
+              style={{
+                backgroundColor: '#0f172a',
+                border: `2px solid ${settings.dot.color || '#38bdf8'}`,
+                boxShadow: `0 0 18px 3px ${settings.dot.color || '#38bdf8'}aa`,
+              }}
+            >
+              <Sparkles className="w-4 h-4 text-sky-400 animate-pulse pointer-events-none" />
+            </div>
           </div>
         </div>
-      </div>
-    );
-  }
+      );
+    }
 
-  // =========================================================================
-  // ROUTE 2: #menu — FLOATING ACTION MENU & FEATURES TAB
-  // =========================================================================
-  if (route === 'menu') {
+    // Expanded Features Menu State
     return (
       <div className="w-full h-full p-2 bg-transparent select-none">
         <div className="w-full h-full bg-slate-900 border border-slate-700/90 rounded-2xl shadow-2xl flex flex-col overflow-hidden text-slate-100 backdrop-blur-2xl">
@@ -216,7 +199,7 @@ export function App() {
               )}
             </div>
             <button
-              onClick={() => window.electronAPI?.closeMenuWindow()}
+              onClick={handleCloseMenu}
               className="p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
               title="Close Menu (Esc)"
             >
@@ -251,7 +234,7 @@ export function App() {
                       if (window.electronAPI) {
                         await window.electronAPI.pasteToActiveWindow(currentDiff.enhancedText);
                       }
-                      setCurrentDiff(null);
+                      handleCloseMenu();
                     }}
                     className="flex-1 py-2.5 bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 shadow-lg shadow-sky-500/25 transition-all active:scale-98"
                   >
@@ -376,7 +359,7 @@ export function App() {
   }
 
   // =========================================================================
-  // ROUTE 3: #editor (or Default) — STANDALONE FULL SCRATCHPAD NOTEPAD
+  // VIEW 2: STANDALONE FULL SCRATCHPAD NOTEPAD (When #editor is opened)
   // =========================================================================
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden select-none font-sans">
@@ -450,7 +433,7 @@ export function App() {
           isProcessing={isProcessing}
           status="idle"
           onClick={() => {
-            window.electronAPI?.openMenuWindow();
+            handleOpenMenu();
           }}
         />
       </main>

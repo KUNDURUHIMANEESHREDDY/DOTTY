@@ -3,31 +3,26 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
 
-  // Window routing & state
-  onMenuTrigger: (callback: (data: { selectedText: string; x: number; y: number }) => void) => {
+  // Expand widget from dot (48x48) to full features menu (360x520)
+  expandToMenu: () => {
+    ipcRenderer.send('expand-to-menu');
+  },
+
+  // Collapse widget from features menu back to dot (48x48)
+  collapseToDot: () => {
+    ipcRenderer.send('collapse-to-dot');
+  },
+
+  // Listen for menu data when expanded
+  onMenuData: (callback: (data: { selectedText: string }) => void) => {
     const listener = (_event: any, data: any) => callback(data);
-    ipcRenderer.on('menu-trigger', listener);
+    ipcRenderer.on('menu-data', listener);
     return () => {
-      ipcRenderer.removeListener('menu-trigger', listener);
+      ipcRenderer.removeListener('menu-data', listener);
     };
   },
 
-  // Notify main process to show menu window next to dot
-  openMenuWindow: () => {
-    ipcRenderer.send('open-menu-window');
-  },
-
-  // Close menu window
-  closeMenuWindow: () => {
-    ipcRenderer.send('close-menu-window');
-  },
-
-  // Open standalone notepad editor window
-  openEditorWindow: () => {
-    ipcRenderer.send('open-editor-window');
-  },
-
-  // Capture highlighted text from external active window (Ctrl+C)
+  // Capture text from active external window (Ctrl+C)
   captureActiveSelection: () => {
     return ipcRenderer.invoke('capture-active-selection');
   },
@@ -37,8 +32,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return ipcRenderer.invoke('paste-to-active-window', text);
   },
 
-  // Resize window dynamically
-  resizeMenuWindow: (width: number, height: number) => {
-    ipcRenderer.send('resize-menu-window', { width, height });
+  // Open standalone full notepad editor window
+  openEditorWindow: () => {
+    ipcRenderer.send('open-editor-window');
   },
 });

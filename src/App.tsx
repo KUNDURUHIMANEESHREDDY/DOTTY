@@ -16,6 +16,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { QuickTemplatesModal } from './components/QuickTemplatesModal';
 import { StatsBar } from './components/StatsBar';
 import { ToastContainer } from './components/Toast';
+import { ExternalLink, Edit3 } from 'lucide-react';
 
 const INITIAL_DEMO_TEXT = `# Welcome to Dotty ✦
 
@@ -35,7 +36,10 @@ write a python script for scraping news headlines
 Click the floating dot anytime to change tone, summarize, or translate.`;
 
 export function App() {
-  // 1. Settings & Tabs Persistence
+  // Check if running as dedicated Editor window or Global Screen Overlay
+  const isDedicatedEditor = window.location.hash === '#editor';
+
+  // 1. Settings & Persistence
   const [settings, setSettings] = useLocalStorage<AppSettings>('dotty_settings_v1', DEFAULT_SETTINGS);
   const [tabs, setTabs] = useLocalStorage<DocumentTab[]>('dotty_tabs_v1', [
     {
@@ -48,7 +52,6 @@ export function App() {
   ]);
   const [activeTabId, setActiveTabId] = useLocalStorage<string>('dotty_active_tab_id', 'tab-default');
 
-  // Active Tab resolution
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0] || {
     id: 'tab-default',
     title: 'Notes',
@@ -61,29 +64,34 @@ export function App() {
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const { content, pushState, undo, redo, canUndo, canRedo, resetHistory } = useUndoRedo(activeTab.content);
 
-  // Sync undo/redo history when switching tabs
-  const prevTabIdRef = useRef<string>(activeTab.id);
-  useEffect(() => {
-    if (prevTabIdRef.current !== activeTab.id) {
-      prevTabIdRef.current = activeTab.id;
-      resetHistory(activeTab.content);
+  // 3. Local Caret Position (Editor mode)
+  const { caretPosition: localCaretPosition, updateCaretPosition } = useCaretPosition(editorRef);
+
+  // 4. Global Screen Cursor Position (System-Wide Overlay mode)
+  const [globalCursorPos, setGlobalCursorPos] = useState<{ x: number; y: number }>({ x: 100, y: 100 });
+  const [isOverlayActive, setIsOverlayActive] = useState(!isDedicatedEditor);
+  const [externalCapturedText, setExternalCapturedText] = useState<string>('');
+
+  // Manage click-through for transparent overlay window
+  const setInteractive = useCallback((interactive: boolean) => {
+    if (window.electronAPI && !isDedicatedEditor) {
+      window.electronAPI.setIgnoreMouseEvents(!interactive, { forward: true });
     }
-  }, [activeTab.id, activeTab.content, resetHistory]);
+  }, [isDedicatedEditor]);
 
-  // Sync content back to tab in memory & localStorage
-  const handleContentChange = (newContent: string) => {
-    pushState(newContent);
-    setTabs((prev) =>
-      prev.map((t) => (t.id === activeTab.id ? { ...t, content: newContent, updatedAt: Date.now() } : t))
-    );
-  };
+  // Subscribe to global cursor move events from Electron
+  useEffect(() => {
+    if (window.electronAPI && !isDedicatedEditor) {
+      const unsubscribe = window.electronAPI.onGlobalCursorMove((pt) => {
+        setGlobalCursorPos(pt);
+      });
+      return unsubscribe;
+    }
+  }, [isDedicatedEditor]);
 
-  // 3. Caret Position Engine
-  const { caretPosition, updateCaretPosition } = useCaretPosition(editorRef);
-
-  // 4. Modals & Popups State
+  // Modals & Popups State
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
-  const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
+  const [menuPosition, setMenuPosition] = useState({ x: 100, y: 100 });
   const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
   const [currentDiff, setCurrentDiff] = useState<DiffResult | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -106,34 +114,42 @@ export function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // 5. Action Execution Engine
+  // Sync interactive state when popups open/close
+  useEffect(() => {
+    if (!isDedicatedEditor) {
+      const anyPopupOpen = isActionMenuOpen || isDiffModalOpen || isSettingsOpen || isTemplatesOpen;
+      setInteractive(anyPopupOpen);
+    }
+  }, [isActionMenuOpen, isDiffModalOpen, isSettingsOpen, isTemplatesOpen, isDedicatedEditor, setInteractive]);
+
+  // 5. Action Execution Engine (Handles both in-editor and external app text)
   const executeAction = async (
     action: ActionType,
     options?: { tone?: ToneType; targetLanguage?: string; customPrompt?: string }
   ) => {
     setIsActionMenuOpen(false);
 
-    // Get current selection or document
-    const textarea = editorRef.current;
     let targetText = content;
-    let isSelectedRange = false;
+    let isExternal = false;
     let range: { start: number; end: number } | undefined;
 
-    if (textarea) {
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
+    if (!isDedicatedEditor && externalCapturedText) {
+      targetText = externalCapturedText;
+      isExternal = true;
+    } else if (isDedicatedEditor && editorRef.current) {
+      const start = editorRef.current.selectionStart;
+      const end = editorRef.current.selectionEnd;
       if (start !== end) {
         const selected = content.substring(start, end);
         if (selected.trim().length > 0) {
           targetText = selected;
-          isSelectedRange = true;
           range = { start, end };
         }
       }
     }
 
     if (!targetText.trim()) {
-      addToast('warning', 'Editor is Empty', 'Please type some text first before running AI actions.');
+      addToast('warning', 'No Text Selected', 'Highlight text in any application and click Dotty to process.');
       return;
     }
 
@@ -165,19 +181,26 @@ export function App() {
     }
   };
 
-  // 6. Diff Modal Acceptance
-  const handleAcceptDiff = (enhancedText: string, applyToSelectionOnly: boolean) => {
+  // 6. Diff Acceptance & Replacement
+  const handleAcceptDiff = async (enhancedText: string, applyToSelectionOnly: boolean) => {
     setIsDiffModalOpen(false);
     if (!currentDiff) return;
 
-    let nextContent = content;
+    // If we captured text from an external application (e.g. Chrome, Word, VSCode)
+    if (!isDedicatedEditor && window.electronAPI && externalCapturedText) {
+      await window.electronAPI.pasteToActiveWindow(enhancedText);
+      addToast('success', 'Pasted to Active Window', 'Replaced text in your application.');
+      setExternalCapturedText('');
+      setCurrentDiff(null);
+      setInteractive(false);
+      return;
+    }
 
+    // In-Editor replacement
+    let nextContent = content;
     if (applyToSelectionOnly && currentDiff.range) {
       const { start, end } = currentDiff.range;
       nextContent = content.substring(0, start) + enhancedText + content.substring(end);
-    } else if (!applyToSelectionOnly && currentDiff.range) {
-      // Applied to selection originally, but user chose full replacement
-      nextContent = enhancedText;
     } else {
       nextContent = enhancedText;
     }
@@ -187,26 +210,41 @@ export function App() {
       prev.map((t) => (t.id === activeTab.id ? { ...t, content: nextContent, updatedAt: Date.now() } : t))
     );
 
-    addToast('success', 'Changes Applied', `Updated via ${currentDiff.action}. Press Ctrl+Z to undo anytime.`);
+    addToast('success', 'Changes Applied', `Updated via ${currentDiff.action}.`);
     setCurrentDiff(null);
 
-    // Refocus editor
     requestAnimationFrame(() => {
       editorRef.current?.focus();
       updateCaretPosition();
     });
   };
 
-  // 7. Dot Click Handler
-  const handleDotClick = () => {
-    setMenuPosition({ x: caretPosition.x, y: caretPosition.y });
+  // 7. Dot Click Handler (System-Wide vs Editor)
+  const handleDotClick = async () => {
+    if (!isDedicatedEditor && window.electronAPI) {
+      // Capture highlighted text from whatever app the user is actively in
+      const selected = await window.electronAPI.captureActiveSelection();
+      setExternalCapturedText(selected);
+      setMenuPosition({ x: globalCursorPos.x, y: globalCursorPos.y });
+    } else {
+      setMenuPosition({ x: localCaretPosition.x, y: localCaretPosition.y });
+    }
+
+    setInteractive(true);
     setIsActionMenuOpen((prev) => !prev);
   };
 
   // 8. Keyboard Shortcuts
   useKeyboardShortcuts({
-    onTriggerMenu: () => {
-      setMenuPosition({ x: caretPosition.x, y: caretPosition.y });
+    onTriggerMenu: async () => {
+      if (!isDedicatedEditor && window.electronAPI) {
+        const selected = await window.electronAPI.captureActiveSelection();
+        setExternalCapturedText(selected);
+        setMenuPosition({ x: globalCursorPos.x, y: globalCursorPos.y });
+      } else {
+        setMenuPosition({ x: localCaretPosition.x, y: localCaretPosition.y });
+      }
+      setInteractive(true);
       setIsActionMenuOpen((prev) => !prev);
     },
     onFixGrammar: () => executeAction('grammar'),
@@ -223,73 +261,154 @@ export function App() {
         setTabs((t) => t.map((tab) => (tab.id === activeTab.id ? { ...tab, content: next } : tab)));
       }
     },
-    onSave: () => {
-      addToast('info', 'Document Saved', 'Your work is auto-saved locally.');
-    },
     onEscape: () => {
       setIsActionMenuOpen(false);
       setIsDiffModalOpen(false);
       setIsSettingsOpen(false);
       setIsTemplatesOpen(false);
+      setInteractive(false);
     },
   });
 
-  // 9. Tab Operations
-  const handleAddTab = () => {
-    const newId = `tab-${Date.now()}`;
-    const newTab: DocumentTab = {
-      id: newId,
-      title: `Draft ${tabs.length + 1}`,
-      content: '',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-    setTabs([...tabs, newTab]);
-    setActiveTabId(newId);
-    resetHistory('');
-    addToast('info', 'New Tab Created');
-  };
+  // Effective Caret Position based on mode
+  const activeDotPosition: CaretPosition = isDedicatedEditor
+    ? localCaretPosition
+    : {
+        x: globalCursorPos.x,
+        y: globalCursorPos.y,
+        height: 24,
+        visible: true,
+        isSelection: Boolean(externalCapturedText),
+        selectedText: externalCapturedText,
+      };
 
-  const handleCloseTab = (id: string) => {
-    if (tabs.length <= 1) return;
-    const remaining = tabs.filter((t) => t.id !== id);
-    setTabs(remaining);
-    if (activeTabId === id) {
-      setActiveTabId(remaining[0].id);
-      resetHistory(remaining[0].content);
-    }
-  };
+  // =========================================================================
+  // VIEW 1: SYSTEM-WIDE GLOBAL OVERLAY MODE (VISIBLE DIRECTLY ON DESKTOP SCREEN)
+  // =========================================================================
+  if (!isDedicatedEditor) {
+    return (
+      <div className="fixed inset-0 w-screen h-screen pointer-events-none overflow-hidden select-none bg-transparent">
+        {/* Floating System-Wide Cursor Dot */}
+        <div
+          onMouseEnter={() => setInteractive(true)}
+          onMouseLeave={() => {
+            if (!isActionMenuOpen && !isDiffModalOpen && !isSettingsOpen) {
+              setInteractive(false);
+            }
+          }}
+          className="pointer-events-auto"
+        >
+          <CaretDot
+            position={activeDotPosition}
+            settings={settings.dot}
+            isProcessing={isProcessing}
+            status={dotStatus}
+            onClick={handleDotClick}
+          />
+        </div>
 
-  const handleRenameTab = (id: string, title: string) => {
-    setTabs(tabs.map((t) => (t.id === id ? { ...t, title } : t)));
-  };
+        {/* Floating Action Menu near Cursor */}
+        <div onMouseEnter={() => setInteractive(true)} className="pointer-events-auto">
+          <ActionMenu
+            isOpen={isActionMenuOpen}
+            position={menuPosition}
+            hasSelection={Boolean(externalCapturedText)}
+            selectedText={externalCapturedText}
+            totalText={externalCapturedText || 'Active Screen Text'}
+            activeGrammarProvider={settings.ai.activeGrammarProvider}
+            activePromptProvider={settings.ai.activePromptProvider}
+            onSelectAction={executeAction}
+            onClose={() => {
+              setIsActionMenuOpen(false);
+              setInteractive(false);
+            }}
+            onOpenSettings={() => {
+              setIsActionMenuOpen(false);
+              setIsSettingsOpen(true);
+            }}
+          />
+        </div>
 
-  // 10. Exports & Copy
-  const handleCopyAll = async () => {
-    try {
-      await navigator.clipboard.writeText(content);
-      addToast('success', 'Copied to Clipboard', 'Entire document copied to clipboard.');
-    } catch {
-      addToast('error', 'Copy Failed', 'Clipboard access denied.');
-    }
-  };
+        {/* Global Floating Modals */}
+        <div onMouseEnter={() => setInteractive(true)} className="pointer-events-auto">
+          <DiffModal
+            isOpen={isDiffModalOpen}
+            diffResult={currentDiff}
+            hasSelection={Boolean(externalCapturedText)}
+            onAccept={handleAcceptDiff}
+            onReject={() => {
+              setIsDiffModalOpen(false);
+              setInteractive(false);
+            }}
+            onCopy={(text) => {
+              navigator.clipboard.writeText(text);
+              addToast('success', 'Copied to Clipboard');
+            }}
+          />
 
-  const handleExportFile = (format: 'md' | 'txt') => {
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${activeTab.title.toLowerCase().replace(/\s+/g, '-') || 'dotty-draft'}.${format}`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    addToast('success', 'File Downloaded', `Exported as ${format.toUpperCase()}.`);
-  };
+          <SettingsModal
+            isOpen={isSettingsOpen}
+            settings={settings}
+            onSave={(newSettings) => {
+              setSettings(newSettings);
+              addToast('success', 'Preferences Saved');
+            }}
+            onClose={() => {
+              setIsSettingsOpen(false);
+              setInteractive(false);
+            }}
+          />
 
+          <QuickTemplatesModal
+            isOpen={isTemplatesOpen}
+            onSelectTemplate={async (tpl) => {
+              if (window.electronAPI) {
+                await window.electronAPI.pasteToActiveWindow(tpl);
+                addToast('success', 'Template Pasted into Active Window');
+              }
+              setIsTemplatesOpen(false);
+              setInteractive(false);
+            }}
+            onClose={() => {
+              setIsTemplatesOpen(false);
+              setInteractive(false);
+            }}
+          />
+        </div>
+
+        {/* Optional floating quick-access badge in bottom-right corner to open Notepad */}
+        <div
+          onMouseEnter={() => setInteractive(true)}
+          onMouseLeave={() => {
+            if (!isActionMenuOpen && !isDiffModalOpen && !isSettingsOpen) {
+              setInteractive(false);
+            }
+          }}
+          className="fixed bottom-4 right-4 pointer-events-auto flex items-center gap-2"
+        >
+          <button
+            onClick={() => window.electronAPI?.openEditorWindow()}
+            className="px-3 py-1.5 rounded-full bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 text-xs font-medium text-slate-200 shadow-xl backdrop-blur-md flex items-center gap-1.5 transition-all hover:scale-105"
+            title="Open Dotty Standalone Notepad Scratchpad"
+          >
+            <Edit3 className="w-3.5 h-3.5 text-sky-400" />
+            <span>Open Notepad</span>
+          </button>
+        </div>
+
+        {/* Toast Notifications */}
+        <div onMouseEnter={() => setInteractive(true)} className="pointer-events-auto">
+          <ToastContainer toasts={toasts} onDismiss={removeToast} />
+        </div>
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // VIEW 2: DEDICATED STANDALONE NOTEPAD SCRATCHPAD (Full Window)
+  // =========================================================================
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden select-none font-sans">
-      {/* Header */}
       <Header
         tabs={tabs}
         activeTabId={activeTab.id}
@@ -300,53 +419,73 @@ export function App() {
           const target = tabs.find((t) => t.id === id);
           if (target) resetHistory(target.content);
         }}
-        onAddTab={handleAddTab}
-        onCloseTab={handleCloseTab}
-        onRenameTab={handleRenameTab}
+        onAddTab={() => {
+          const newId = `tab-${Date.now()}`;
+          setTabs([...tabs, { id: newId, title: `Draft ${tabs.length + 1}`, content: '', createdAt: Date.now(), updatedAt: Date.now() }]);
+          setActiveTabId(newId);
+          resetHistory('');
+        }}
+        onCloseTab={(id) => {
+          if (tabs.length <= 1) return;
+          const remaining = tabs.filter((t) => t.id !== id);
+          setTabs(remaining);
+          if (activeTabId === id) {
+            setActiveTabId(remaining[0].id);
+            resetHistory(remaining[0].content);
+          }
+        }}
+        onRenameTab={(id, title) => setTabs(tabs.map((t) => (t.id === id ? { ...t, title } : t)))}
         onUndo={() => {
           const prev = undo();
-          if (prev !== null) {
-            setTabs((t) => t.map((tab) => (tab.id === activeTab.id ? { ...tab, content: prev } : tab)));
-          }
+          if (prev !== null) setTabs((t) => t.map((tab) => (tab.id === activeTab.id ? { ...tab, content: prev } : tab)));
         }}
         onRedo={() => {
           const next = redo();
-          if (next !== null) {
-            setTabs((t) => t.map((tab) => (tab.id === activeTab.id ? { ...tab, content: next } : tab)));
-          }
+          if (next !== null) setTabs((t) => t.map((tab) => (tab.id === activeTab.id ? { ...tab, content: next } : tab)));
         }}
         onQuickGrammar={() => executeAction('grammar')}
         onQuickEnhance={() => executeAction('enhance-prompt')}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenTemplates={() => setIsTemplatesOpen(true)}
-        onExport={handleExportFile}
-        onCopyAll={handleCopyAll}
+        onExport={(format) => {
+          const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `${activeTab.title.toLowerCase().replace(/\s+/g, '-')}.${format}`;
+          a.click();
+          URL.revokeObjectURL(url);
+        }}
+        onCopyAll={() => {
+          navigator.clipboard.writeText(content);
+          addToast('success', 'Copied to Clipboard');
+        }}
       />
 
-      {/* Workspace Editor Area */}
       <main className="relative flex-1 flex overflow-hidden">
         <Editor
           content={content}
           settings={settings}
           editorRef={editorRef}
-          onChange={handleContentChange}
+          onChange={(newContent) => {
+            pushState(newContent);
+            setTabs((prev) => prev.map((t) => (t.id === activeTab.id ? { ...t, content: newContent, updatedAt: Date.now() } : t)));
+          }}
         />
 
-        {/* Floating Caret Dot Indicator */}
         <CaretDot
-          position={caretPosition}
+          position={localCaretPosition}
           settings={settings.dot}
           isProcessing={isProcessing}
           status={dotStatus}
           onClick={handleDotClick}
         />
 
-        {/* Action Menu Popup */}
         <ActionMenu
           isOpen={isActionMenuOpen}
           position={menuPosition}
-          hasSelection={caretPosition.isSelection}
-          selectedText={caretPosition.selectedText}
+          hasSelection={localCaretPosition.isSelection}
+          selectedText={localCaretPosition.selectedText}
           totalText={content}
           activeGrammarProvider={settings.ai.activeGrammarProvider}
           activePromptProvider={settings.ai.activePromptProvider}
@@ -359,7 +498,6 @@ export function App() {
         />
       </main>
 
-      {/* Footer Stats Bar */}
       <StatsBar
         content={content}
         activeGrammarProvider={settings.ai.activeGrammarProvider}
@@ -367,7 +505,6 @@ export function App() {
         isAutoSaved={true}
       />
 
-      {/* Modals */}
       <DiffModal
         isOpen={isDiffModalOpen}
         diffResult={currentDiff}
@@ -385,7 +522,7 @@ export function App() {
         settings={settings}
         onSave={(newSettings) => {
           setSettings(newSettings);
-          addToast('success', 'Preferences Saved', 'Updated AI and dot preferences.');
+          addToast('success', 'Preferences Saved');
         }}
         onClose={() => setIsSettingsOpen(false)}
       />
@@ -393,15 +530,15 @@ export function App() {
       <QuickTemplatesModal
         isOpen={isTemplatesOpen}
         onSelectTemplate={(tpl) => {
-          handleContentChange(tpl);
-          addToast('info', 'Template Loaded', 'Loaded template into editor.');
+          pushState(tpl);
+          setTabs((prev) => prev.map((t) => (t.id === activeTab.id ? { ...t, content: tpl, updatedAt: Date.now() } : t)));
         }}
         onClose={() => setIsTemplatesOpen(false)}
       />
 
-      {/* Toast Notifications */}
       <ToastContainer toasts={toasts} onDismiss={removeToast} />
     </div>
   );
 }
+
 export default App;

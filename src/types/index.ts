@@ -2,6 +2,20 @@ export type AIProvider = 'languagetool' | 'ollama' | 'gemini' | 'openai' | 'clau
 
 export type ToneType = 'professional' | 'casual' | 'concise' | 'academic' | 'persuasive' | 'accessible';
 
+declare global {
+  interface Window {
+    electronAPI?: {
+      platform: string;
+      setIgnoreMouseEvents: (ignore: boolean, options?: { forward: boolean }) => void;
+      onGlobalCursorMove: (callback: (point: { x: number; y: number }) => void) => () => void;
+      captureActiveSelection: () => Promise<string>;
+      pasteToActiveWindow: (text: string) => Promise<boolean>;
+      openEditorWindow: () => void;
+      toggleOverlay: () => void;
+    };
+  }
+}
+
 export type ActionType = 
   | 'grammar' 
   | 'enhance-prompt' 

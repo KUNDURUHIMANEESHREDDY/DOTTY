@@ -143,7 +143,7 @@ export function App() {
               setIsActionMenuOpen(true);
               window.electronAPI?.openActionMenu();
             }}
-            title="Dotty AI Assistant (Click to open ActionMenu or Ctrl+Shift+Space)"
+            title="Dotty AI Assistant (Click to open ActionMenu or Alt+Space)"
           >
             <div className="relative group flex items-center justify-center pointer-events-auto">
               {/* Outer Pulsing Glow */}
@@ -166,9 +166,9 @@ export function App() {
           </div>
         )}
 
-        {/* Floating ActionMenu */}
+        {/* Floating ActionMenu (Full Uncropped Card) */}
         {isActionMenuOpen && (
-          <div className="p-2 w-full h-full flex flex-col justify-center">
+          <div className="w-full h-full p-1 flex flex-col">
             <ActionMenu
               isOpen={isActionMenuOpen}
               position={{ x: 0, y: 0 }}

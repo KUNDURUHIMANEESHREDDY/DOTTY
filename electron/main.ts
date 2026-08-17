@@ -41,7 +41,7 @@ function simulateKeyPress(keys: string): Promise<void> {
   });
 }
 
-// 1. FLOATING DESKTOP CARET DOT & ACTION MENU WIDGET
+// 1. FLOATING DESKTOP CARET DOT & ACTION MENU WIDGET (48x48 <---> 320x460)
 function createWidgetWindow() {
   widgetWindow = new BrowserWindow({
     width: 48,
@@ -50,7 +50,7 @@ function createWidgetWindow() {
     frame: false,
     alwaysOnTop: true,
     skipTaskbar: true,
-    resizable: true, // Allows dynamic expansion to 340x480 for ActionMenu
+    resizable: true, // Crucial for dynamic expansion on Windows
     hasShadow: false,
     focusable: true,
     show: false,     // Initially hidden until active typing is detected
@@ -138,7 +138,7 @@ function startCaretTracker() {
 
             if (state === 'caret' && !isNaN(x) && !isNaN(y)) {
               lastCaretPos = { x, y };
-              // When ActionMenu is NOT open, follow active typing cursor
+              // When ActionMenu is NOT open, move the 48x48 dot
               if (!isMenuOpen && widgetWindow && !widgetWindow.isDestroyed()) {
                 const display = screen.getDisplayNearestPoint({ x, y });
                 const maxX = display.bounds.x + display.bounds.width - 55;
@@ -148,8 +148,8 @@ function startCaretTracker() {
                 const targetY = Math.min(Math.max(y + 2, display.bounds.y + 5), maxY);
 
                 widgetWindow.setBounds({
-                  x: targetX,
-                  y: targetY,
+                  x: Math.round(targetX),
+                  y: Math.round(targetY),
                   width: 48,
                   height: 48,
                 });
@@ -176,39 +176,20 @@ function startCaretTracker() {
   }
 }
 
-// Open ActionMenu on Dot Click
-async function openActionMenu() {
-  if (!widgetWindow || widgetWindow.isDestroyed()) {
-    createWidgetWindow();
-  }
-
+// Expand Widget to Full ActionMenu Box (320x460) Instantly in 0ms
+function openActionMenu() {
   isMenuOpen = true;
-
-  // Capture selection from current active window
-  let selectedText = '';
-  try {
-    const previousClipboard = clipboard.readText();
-    clipboard.writeText('');
-    await simulateKeyPress('^c');
-    await new Promise((r) => setTimeout(r, 100));
-    selectedText = clipboard.readText();
-    if (!selectedText) {
-      clipboard.writeText(previousClipboard);
-    }
-  } catch (err) {
-    console.warn('Capture error:', err);
-  }
 
   const anchorPoint = (lastCaretPos && lastCaretPos.x > 0) ? lastCaretPos : screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(anchorPoint);
 
-  const menuWidth = 340;
-  const menuHeight = 480;
-  let posX = anchorPoint.x + 15;
-  let posY = anchorPoint.y - 30;
+  const menuWidth = 320;
+  const menuHeight = 460;
+  let posX = anchorPoint.x + 12;
+  let posY = anchorPoint.y - 20;
 
   if (posX + menuWidth > display.bounds.x + display.bounds.width) {
-    posX = anchorPoint.x - menuWidth - 15;
+    posX = anchorPoint.x - menuWidth - 12;
   }
   if (posY + menuHeight > display.bounds.y + display.bounds.height) {
     posY = display.bounds.y + display.bounds.height - menuHeight - 10;
@@ -217,22 +198,23 @@ async function openActionMenu() {
     posY = display.bounds.y + 10;
   }
 
+  // 1. Expand window bounds immediately
   if (widgetWindow && !widgetWindow.isDestroyed()) {
     widgetWindow.setBounds({
-      x: posX,
-      y: posY,
+      x: Math.round(posX),
+      y: Math.round(posY),
       width: menuWidth,
       height: menuHeight,
     });
     widgetWindow.show();
     widgetWindow.focus();
     widgetWindow.webContents.send('menu-trigger', {
-      selectedText: selectedText || '',
+      selectedText: clipboard.readText() || '',
     });
   }
 }
 
-// Close ActionMenu and shrink back to Dot
+// Collapse ActionMenu back to 48x48 Dot
 function closeActionMenu() {
   isMenuOpen = false;
   if (widgetWindow && !widgetWindow.isDestroyed()) {
@@ -244,8 +226,8 @@ function closeActionMenu() {
     const targetY = Math.min(Math.max(lastCaretPos.y + 2, display.bounds.y + 5), maxY);
 
     widgetWindow.setBounds({
-      x: targetX,
-      y: targetY,
+      x: Math.round(targetX),
+      y: Math.round(targetY),
       width: 48,
       height: 48,
     });

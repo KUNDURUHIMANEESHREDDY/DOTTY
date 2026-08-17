@@ -36,6 +36,16 @@ export default defineConfig(({ mode }) => {
                 vite: {
                   build: {
                     outDir: 'dist-electron',
+                    lib: {
+                      // Electron loads .js preload scripts as CommonJS (sandboxed);
+                      // ESM output ("import" statements) fails with "Cannot use import statement outside a module"
+                      formats: ['cjs'],
+                    },
+                    rollupOptions: {
+                      output: {
+                        inlineDynamicImports: true,
+                      },
+                    },
                   },
                 },
               },

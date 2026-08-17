@@ -19,8 +19,10 @@ if (process.platform === 'win32') {
 }
 
 let dotWindow: BrowserWindow | null = null;
-let mainWindow: BrowserWindow | null = null;
+let enhanceWindow: BrowserWindow | null = null;
+let editorWindow: BrowserWindow | null = null;
 let trackerProcess: ChildProcess | null = null;
+let isEnhanceOpen = false;
 let lastCaretPos = { x: 400, y: 300 };
 
 // Helper to simulate Ctrl+C and Ctrl+V on Windows
@@ -40,7 +42,7 @@ function simulateKeyPress(keys: string): Promise<void> {
   });
 }
 
-// 1. COMPACT 48x48 FLOATING KEYBOARD CARET DOT (Clicks open Full Dotty Tab)
+// 1. COMPACT 48x48 FLOATING KEYBOARD CARET DOT
 function createDotWindow() {
   dotWindow = new BrowserWindow({
     width: 48,
@@ -52,7 +54,7 @@ function createDotWindow() {
     resizable: false,
     hasShadow: false,
     focusable: true,
-    show: false, // Initially hidden until typing is detected
+    show: false, // Initially hidden until active typing is detected
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -76,21 +78,57 @@ function createDotWindow() {
   });
 }
 
-// 2. FULL MAIN APPLICATION WINDOW (Full Tabs, Editor, AI Features, Settings)
-function createMainWindow() {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.show();
-    mainWindow.focus();
+// 2. ENHANCE FEATURES TAB WINDOW (380x540 locked on screen until closed/accepted)
+function createEnhanceWindow() {
+  enhanceWindow = new BrowserWindow({
+    width: 380,
+    height: 540,
+    transparent: true,
+    frame: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    hasShadow: true,
+    focusable: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      spellcheck: false,
+    },
+  });
+
+  enhanceWindow.setAlwaysOnTop(true, 'screen-saver');
+  enhanceWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devServerUrl) {
+    enhanceWindow.loadURL(`${devServerUrl}#enhance`);
+  } else {
+    enhanceWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'enhance' });
+  }
+
+  enhanceWindow.on('closed', () => {
+    enhanceWindow = null;
+  });
+}
+
+// 3. STANDALONE FULL NOTEPAD SCRATCHPAD WINDOW
+function createEditorWindow() {
+  if (editorWindow && !editorWindow.isDestroyed()) {
+    editorWindow.show();
+    editorWindow.focus();
     return;
   }
 
-  mainWindow = new BrowserWindow({
+  editorWindow = new BrowserWindow({
     width: 1100,
     height: 750,
     minWidth: 850,
     minHeight: 550,
     backgroundColor: '#020617',
-    title: 'Dotty — AI Typing Assistant & Smart Editor',
+    title: 'Dotty Notepad — Standalone Scratchpad',
     show: true,
     autoHideMenuBar: true,
     webPreferences: {
@@ -102,17 +140,17 @@ function createMainWindow() {
 
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
   if (devServerUrl) {
-    mainWindow.loadURL(devServerUrl);
+    editorWindow.loadURL(`${devServerUrl}#editor`);
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    editorWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'editor' });
   }
 
-  mainWindow.on('closed', () => {
-    mainWindow = null;
+  editorWindow.on('closed', () => {
+    editorWindow = null;
   });
 }
 
-// 3. REAL-TIME NATIVE KEYBOARD CARET TRACKER
+// 4. REAL-TIME NATIVE KEYBOARD CARET TRACKER
 function startCaretTracker() {
   const isDev = !app.isPackaged;
   const trackerExecutable = isDev
@@ -137,7 +175,8 @@ function startCaretTracker() {
 
             if (state === 'caret' && !isNaN(x) && !isNaN(y)) {
               lastCaretPos = { x, y };
-              if (dotWindow && !dotWindow.isDestroyed()) {
+              // When Enhance Tab is NOT open, move the floating dot to active typing caret
+              if (!isEnhanceOpen && dotWindow && !dotWindow.isDestroyed()) {
                 const display = screen.getDisplayNearestPoint({ x, y });
                 const maxX = display.bounds.x + display.bounds.width - 55;
                 const maxY = display.bounds.y + display.bounds.height - 55;
@@ -151,7 +190,8 @@ function startCaretTracker() {
                 }
               }
             } else if (state === 'none') {
-              if (dotWindow && !dotWindow.isDestroyed() && dotWindow.isVisible()) {
+              // Hide dot only when Enhance Tab is not open
+              if (!isEnhanceOpen && dotWindow && !dotWindow.isDestroyed() && dotWindow.isVisible()) {
                 dotWindow.hide();
               }
             }
@@ -168,75 +208,104 @@ function startCaretTracker() {
   }
 }
 
-// Open Full Dotty App Window with active selection loaded
-async function openDottyFullApp() {
+// Open Enhance Tab locked on screen
+async function openEnhanceTab() {
+  if (!enhanceWindow || enhanceWindow.isDestroyed()) {
+    createEnhanceWindow();
+  }
+
+  isEnhanceOpen = true;
+  if (dotWindow && !dotWindow.isDestroyed()) {
+    dotWindow.hide();
+  }
+
   // Capture selection from current active window
   let selectedText = '';
   try {
     const previousClipboard = clipboard.readText();
     clipboard.writeText('');
     await simulateKeyPress('^c');
-    await new Promise((r) => setTimeout(r, 120));
+    await new Promise((r) => setTimeout(r, 100));
     selectedText = clipboard.readText();
     if (!selectedText) {
       clipboard.writeText(previousClipboard);
     }
   } catch (err) {
-    console.warn('Capture selection error:', err);
+    console.warn('Capture error:', err);
   }
 
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    createMainWindow();
-  } else {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
+  const anchorPoint = (lastCaretPos && lastCaretPos.x > 0) ? lastCaretPos : screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(anchorPoint);
+
+  const menuWidth = 380;
+  const menuHeight = 540;
+  let posX = anchorPoint.x + 15;
+  let posY = anchorPoint.y - 30;
+
+  if (posX + menuWidth > display.bounds.x + display.bounds.width) {
+    posX = anchorPoint.x - menuWidth - 15;
+  }
+  if (posY + menuHeight > display.bounds.y + display.bounds.height) {
+    posY = display.bounds.y + display.bounds.height - menuHeight - 10;
+  }
+  if (posY < display.bounds.y + 10) {
+    posY = display.bounds.y + 10;
   }
 
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('load-captured-text', {
-      selectedText: selectedText || '',
+  if (enhanceWindow && !enhanceWindow.isDestroyed()) {
+    enhanceWindow.setPosition(posX, posY);
+    enhanceWindow.show();
+    enhanceWindow.focus();
+    enhanceWindow.moveTop();
+    enhanceWindow.webContents.send('enhance-data', {
+      text: selectedText || '',
     });
   }
 }
 
+// Close Enhance Tab
+function closeEnhanceTab() {
+  isEnhanceOpen = false;
+  if (enhanceWindow && !enhanceWindow.isDestroyed()) {
+    enhanceWindow.hide();
+  }
+}
+
 // IPC Handlers
-ipcMain.on('open-dotty-app', () => {
-  openDottyFullApp();
+ipcMain.on('open-enhance-tab', () => {
+  openEnhanceTab();
+});
+
+ipcMain.on('close-enhance-tab', () => {
+  closeEnhanceTab();
+});
+
+ipcMain.on('open-editor-window', () => {
+  closeEnhanceTab();
+  createEditorWindow();
 });
 
 ipcMain.handle('paste-to-active-window', async (_event, text: string) => {
   clipboard.writeText(text);
+  closeEnhanceTab();
   await new Promise((r) => setTimeout(r, 60));
   await simulateKeyPress('^v');
   return true;
 });
 
-ipcMain.handle('capture-active-selection', async () => {
-  const previousClipboard = clipboard.readText();
-  clipboard.writeText('');
-  await simulateKeyPress('^c');
-  await new Promise((r) => setTimeout(r, 100));
-  const selectedText = clipboard.readText();
-  if (!selectedText) {
-    clipboard.writeText(previousClipboard);
-  }
-  return selectedText || '';
-});
-
 app.whenReady().then(() => {
   createDotWindow();
-  createMainWindow();
+  createEnhanceWindow();
   startCaretTracker();
 
   // Global Hotkey (Alt+Space or Ctrl+Shift+Space)
   try {
     globalShortcut.register('Alt+Space', () => {
-      openDottyFullApp();
+      openEnhanceTab();
     });
 
     globalShortcut.register('CommandOrControl+Shift+Space', () => {
-      openDottyFullApp();
+      openEnhanceTab();
     });
   } catch (err) {
     console.warn('Global shortcut registration failed:', err);

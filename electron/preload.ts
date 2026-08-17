@@ -3,32 +3,32 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
 
-  // Open the full Dotty application window on click
-  openDottyApp: () => {
-    ipcRenderer.send('open-dotty-app');
+  // Open the floating Enhance Features tab on click
+  openEnhanceTab: () => {
+    ipcRenderer.send('open-enhance-tab');
   },
 
-  // Open standalone editor
-  openEditorWindow: () => {
-    ipcRenderer.send('open-dotty-app');
+  // Close Enhance Features tab
+  closeEnhanceTab: () => {
+    ipcRenderer.send('close-enhance-tab');
   },
 
-  // Listen for captured text loaded into the full application window
-  onLoadCapturedText: (callback: (data: { selectedText: string }) => void) => {
+  // Listen for text loaded into the Enhance tab
+  onEnhanceData: (callback: (data: { text: string }) => void) => {
     const listener = (_event: any, data: any) => callback(data);
-    ipcRenderer.on('load-captured-text', listener);
+    ipcRenderer.on('enhance-data', listener);
     return () => {
-      ipcRenderer.removeListener('load-captured-text', listener);
+      ipcRenderer.removeListener('enhance-data', listener);
     };
-  },
-
-  // Capture text from active external window (Ctrl+C)
-  captureActiveSelection: () => {
-    return ipcRenderer.invoke('capture-active-selection');
   },
 
   // Paste enhanced text into active external window (Ctrl+V)
   pasteToActiveWindow: (text: string) => {
     return ipcRenderer.invoke('paste-to-active-window', text);
+  },
+
+  // Open full standalone notepad editor
+  openEditorWindow: () => {
+    ipcRenderer.send('open-editor-window');
   },
 });

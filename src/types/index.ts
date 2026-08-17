@@ -6,11 +6,11 @@ declare global {
   interface Window {
     electronAPI?: {
       platform: string;
-      openDottyApp: () => void;
-      openEditorWindow: () => void;
-      onLoadCapturedText?: (callback: (data: { selectedText: string }) => void) => () => void;
-      captureActiveSelection: () => Promise<string>;
+      openEnhanceTab: () => void;
+      closeEnhanceTab: () => void;
+      onEnhanceData?: (callback: (data: { text: string }) => void) => () => void;
       pasteToActiveWindow: (text: string) => Promise<boolean>;
+      openEditorWindow: () => void;
     };
   }
 }

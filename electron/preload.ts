@@ -3,22 +3,32 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
 
-  // Open the whole full application window on dot click
-  openWholeWindow: () => {
-    ipcRenderer.send('open-whole-window');
+  // Expand widget to show ActionMenu (340x480)
+  openActionMenu: () => {
+    ipcRenderer.send('open-action-menu');
   },
 
-  // Listen for text loaded into the whole window
-  onLoadText: (callback: (data: { text: string }) => void) => {
+  // Collapse widget back to CaretDot (48x48)
+  closeActionMenu: () => {
+    ipcRenderer.send('close-action-menu');
+  },
+
+  // Listen for captured text when ActionMenu opens
+  onMenuTrigger: (callback: (data: { selectedText: string }) => void) => {
     const listener = (_event: any, data: any) => callback(data);
-    ipcRenderer.on('load-text', listener);
+    ipcRenderer.on('menu-trigger', listener);
     return () => {
-      ipcRenderer.removeListener('load-text', listener);
+      ipcRenderer.removeListener('menu-trigger', listener);
     };
   },
 
-  // Paste text to active external window (Ctrl+V)
+  // Paste enhanced text to active window
   pasteToActiveWindow: (text: string) => {
     return ipcRenderer.invoke('paste-to-active-window', text);
+  },
+
+  // Open standalone notepad
+  openEditorWindow: () => {
+    ipcRenderer.send('open-editor-window');
   },
 });

@@ -8,7 +8,7 @@ import {
 } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn, ChildProcess } from 'node:child_process';
+import { exec, spawn, ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -18,24 +18,42 @@ if (process.platform === 'win32') {
   app.setAppUserModelId('com.dotty.app');
 }
 
-let dotWindow: BrowserWindow | null = null;
-let mainWindow: BrowserWindow | null = null;
+let widgetWindow: BrowserWindow | null = null;
+let editorWindow: BrowserWindow | null = null;
 let trackerProcess: ChildProcess | null = null;
+let isMenuOpen = false;
 let lastCaretPos = { x: 400, y: 300 };
 
-// 1. FLOATING KEYBOARD CARET DOT (48x48 High-Visibility Bubble)
-function createDotWindow() {
-  dotWindow = new BrowserWindow({
+// Helper to simulate Ctrl+C and Ctrl+V on Windows
+function simulateKeyPress(keys: string): Promise<void> {
+  return new Promise((resolve) => {
+    if (process.platform === 'win32') {
+      const vbsFile = path.join(app.getPath('temp'), '__dotty_sendkeys.vbs');
+      const vbsContent = `Set w = CreateObject("WScript.Shell")\nw.SendKeys "${keys}"\n`;
+      fs.writeFile(vbsFile, vbsContent, () => {
+        exec(`cscript //nologo "${vbsFile}"`, () => {
+          resolve();
+        });
+      });
+    } else {
+      resolve();
+    }
+  });
+}
+
+// 1. FLOATING DESKTOP CARET DOT & ACTION MENU WIDGET
+function createWidgetWindow() {
+  widgetWindow = new BrowserWindow({
     width: 48,
     height: 48,
     transparent: true,
     frame: false,
     alwaysOnTop: true,
     skipTaskbar: true,
-    resizable: false,
+    resizable: true, // Allows dynamic expansion to 340x480 for ActionMenu
     hasShadow: false,
     focusable: true,
-    show: false,
+    show: false,     // Initially hidden until active typing is detected
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -44,49 +62,54 @@ function createDotWindow() {
     },
   });
 
-  dotWindow.setAlwaysOnTop(true, 'screen-saver');
-  dotWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  widgetWindow.setAlwaysOnTop(true, 'screen-saver');
+  widgetWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
   if (devServerUrl) {
-    dotWindow.loadURL(`${devServerUrl}#dot`);
+    widgetWindow.loadURL(devServerUrl);
   } else {
-    dotWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'dot' });
+    widgetWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 
-  dotWindow.on('closed', () => {
-    dotWindow = null;
+  widgetWindow.on('closed', () => {
+    widgetWindow = null;
   });
 }
 
-// 2. WHOLE MAIN APPLICATION WINDOW (1100x750 Standard Desktop Window)
-function createMainWindow() {
-  mainWindow = new BrowserWindow({
+// 2. STANDALONE FULL NOTEPAD SCRATCHPAD WINDOW
+function createEditorWindow() {
+  if (editorWindow && !editorWindow.isDestroyed()) {
+    editorWindow.show();
+    editorWindow.focus();
+    return;
+  }
+
+  editorWindow = new BrowserWindow({
     width: 1100,
     height: 750,
     minWidth: 850,
     minHeight: 550,
     backgroundColor: '#020617',
-    title: 'Dotty — AI Typing Assistant & Editor',
-    frame: true,
-    show: false,
+    title: 'Dotty Notepad — Standalone Scratchpad',
+    show: true,
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
-      spellcheck: false,
     },
   });
 
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
   if (devServerUrl) {
-    mainWindow.loadURL(devServerUrl);
+    editorWindow.loadURL(`${devServerUrl}#editor`);
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    editorWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'editor' });
   }
 
-  mainWindow.on('closed', () => {
-    mainWindow = null;
+  editorWindow.on('closed', () => {
+    editorWindow = null;
   });
 }
 
@@ -115,7 +138,8 @@ function startCaretTracker() {
 
             if (state === 'caret' && !isNaN(x) && !isNaN(y)) {
               lastCaretPos = { x, y };
-              if (dotWindow && !dotWindow.isDestroyed()) {
+              // When ActionMenu is NOT open, follow active typing cursor
+              if (!isMenuOpen && widgetWindow && !widgetWindow.isDestroyed()) {
                 const display = screen.getDisplayNearestPoint({ x, y });
                 const maxX = display.bounds.x + display.bounds.width - 55;
                 const maxY = display.bounds.y + display.bounds.height - 55;
@@ -123,14 +147,20 @@ function startCaretTracker() {
                 const targetX = Math.min(Math.max(x + 10, display.bounds.x + 5), maxX);
                 const targetY = Math.min(Math.max(y + 2, display.bounds.y + 5), maxY);
 
-                dotWindow.setPosition(targetX, targetY);
-                if (!dotWindow.isVisible()) {
-                  dotWindow.show();
+                widgetWindow.setBounds({
+                  x: targetX,
+                  y: targetY,
+                  width: 48,
+                  height: 48,
+                });
+
+                if (!widgetWindow.isVisible()) {
+                  widgetWindow.show();
                 }
               }
             } else if (state === 'none') {
-              if (dotWindow && !dotWindow.isDestroyed() && dotWindow.isVisible()) {
-                dotWindow.hide();
+              if (!isMenuOpen && widgetWindow && !widgetWindow.isDestroyed() && widgetWindow.isVisible()) {
+                widgetWindow.hide();
               }
             }
           }
@@ -146,49 +176,116 @@ function startCaretTracker() {
   }
 }
 
-// Open Whole Main Window on Dot Click
-function openWholeWindow() {
-  const selectedText = clipboard.readText() || '';
-
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    createMainWindow();
+// Open ActionMenu on Dot Click
+async function openActionMenu() {
+  if (!widgetWindow || widgetWindow.isDestroyed()) {
+    createWidgetWindow();
   }
 
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
-    mainWindow.moveTop();
+  isMenuOpen = true;
 
-    if (selectedText && selectedText.trim().length > 0) {
-      mainWindow.webContents.send('load-text', { text: selectedText });
+  // Capture selection from current active window
+  let selectedText = '';
+  try {
+    const previousClipboard = clipboard.readText();
+    clipboard.writeText('');
+    await simulateKeyPress('^c');
+    await new Promise((r) => setTimeout(r, 100));
+    selectedText = clipboard.readText();
+    if (!selectedText) {
+      clipboard.writeText(previousClipboard);
     }
+  } catch (err) {
+    console.warn('Capture error:', err);
+  }
+
+  const anchorPoint = (lastCaretPos && lastCaretPos.x > 0) ? lastCaretPos : screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(anchorPoint);
+
+  const menuWidth = 340;
+  const menuHeight = 480;
+  let posX = anchorPoint.x + 15;
+  let posY = anchorPoint.y - 30;
+
+  if (posX + menuWidth > display.bounds.x + display.bounds.width) {
+    posX = anchorPoint.x - menuWidth - 15;
+  }
+  if (posY + menuHeight > display.bounds.y + display.bounds.height) {
+    posY = display.bounds.y + display.bounds.height - menuHeight - 10;
+  }
+  if (posY < display.bounds.y + 10) {
+    posY = display.bounds.y + 10;
+  }
+
+  if (widgetWindow && !widgetWindow.isDestroyed()) {
+    widgetWindow.setBounds({
+      x: posX,
+      y: posY,
+      width: menuWidth,
+      height: menuHeight,
+    });
+    widgetWindow.show();
+    widgetWindow.focus();
+    widgetWindow.webContents.send('menu-trigger', {
+      selectedText: selectedText || '',
+    });
+  }
+}
+
+// Close ActionMenu and shrink back to Dot
+function closeActionMenu() {
+  isMenuOpen = false;
+  if (widgetWindow && !widgetWindow.isDestroyed()) {
+    const display = screen.getDisplayNearestPoint(lastCaretPos);
+    const maxX = display.bounds.x + display.bounds.width - 55;
+    const maxY = display.bounds.y + display.bounds.height - 55;
+
+    const targetX = Math.min(Math.max(lastCaretPos.x + 10, display.bounds.x + 5), maxX);
+    const targetY = Math.min(Math.max(lastCaretPos.y + 2, display.bounds.y + 5), maxY);
+
+    widgetWindow.setBounds({
+      x: targetX,
+      y: targetY,
+      width: 48,
+      height: 48,
+    });
   }
 }
 
 // IPC Handlers
-ipcMain.on('open-whole-window', () => {
-  openWholeWindow();
+ipcMain.on('open-action-menu', () => {
+  openActionMenu();
+});
+
+ipcMain.on('close-action-menu', () => {
+  closeActionMenu();
+});
+
+ipcMain.on('open-editor-window', () => {
+  closeActionMenu();
+  createEditorWindow();
 });
 
 ipcMain.handle('paste-to-active-window', async (_event, text: string) => {
   clipboard.writeText(text);
+  closeActionMenu();
+  await new Promise((r) => setTimeout(r, 60));
+  await simulateKeyPress('^v');
   return true;
 });
 
 app.whenReady().then(() => {
-  createDotWindow();
-  createMainWindow();
+  createWidgetWindow();
   startCaretTracker();
 
-  // Global Hotkeys
+  // Global Hotkey (Alt+Space or Ctrl+Shift+Space)
   try {
     globalShortcut.register('Alt+Space', () => {
-      openWholeWindow();
+      openActionMenu();
     });
 
     globalShortcut.register('CommandOrControl+Shift+Space', () => {
-      openWholeWindow();
+      openActionMenu();
     });
   } catch (err) {
     console.warn('Global shortcut registration failed:', err);

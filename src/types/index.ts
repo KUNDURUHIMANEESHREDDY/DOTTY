@@ -6,8 +6,9 @@ declare global {
   interface Window {
     electronAPI?: {
       platform: string;
-      openWholeWindow: () => void;
-      onLoadText?: (callback: (data: { text: string }) => void) => () => void;
+      openActionMenu: () => void;
+      closeActionMenu: () => void;
+      onMenuTrigger?: (callback: (data: { selectedText: string }) => void) => () => void;
       pasteToActiveWindow: (text: string) => Promise<boolean>;
       openEditorWindow: () => void;
     };

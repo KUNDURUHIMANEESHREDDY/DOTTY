@@ -23,6 +23,7 @@ let menuWindow: BrowserWindow | null = null;
 let editorWindow: BrowserWindow | null = null;
 let trackerProcess: ChildProcess | null = null;
 let lastCaretPos = { x: 400, y: 300 };
+let menuBlurTimeout: NodeJS.Timeout | null = null;
 
 // Helper to simulate Ctrl+C and Ctrl+V on Windows
 function simulateKeyPress(keys: string): Promise<void> {
@@ -41,7 +42,7 @@ function simulateKeyPress(keys: string): Promise<void> {
   });
 }
 
-// 1. COMPACT 48x48 KEYBOARD CARET DOT WINDOW (Visible ONLY when user is typing / in a text box)
+// 1. COMPACT 48x48 KEYBOARD CARET DOT WINDOW (Focusable so clicks ALWAYS register!)
 function createDotWindow() {
   dotWindow = new BrowserWindow({
     width: 48,
@@ -52,8 +53,8 @@ function createDotWindow() {
     skipTaskbar: true,
     resizable: false,
     hasShadow: false,
-    focusable: false, // Don't steal focus from active text box!
-    show: false,      // Initially hidden until user focuses an input/types
+    focusable: true, // Must be true for clicks to register on Windows!
+    show: false,     // Initially hidden until active typing is detected
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -77,7 +78,7 @@ function createDotWindow() {
   });
 }
 
-// 2. REAL-TIME NATIVE KEYBOARD CARET TRACKER (NO MOUSE FOLLOWING)
+// 2. REAL-TIME NATIVE KEYBOARD CARET TRACKER
 function startCaretTracker() {
   const isDev = !app.isPackaged;
   const trackerExecutable = isDev
@@ -116,7 +117,6 @@ function startCaretTracker() {
                 }
               }
             } else if (state === 'none') {
-              // User is NOT typing / not in a text box -> Hide the dot!
               if (dotWindow && !dotWindow.isDestroyed() && dotWindow.isVisible()) {
                 dotWindow.hide();
               }
@@ -146,6 +146,7 @@ function createMenuWindow() {
     resizable: false,
     hasShadow: true,
     show: false,
+    focusable: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -163,10 +164,18 @@ function createMenuWindow() {
     menuWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'menu' });
   }
 
-  // Auto-hide when user clicks outside the menu
   menuWindow.on('blur', () => {
-    if (menuWindow && !menuWindow.isDestroyed()) {
-      menuWindow.hide();
+    menuBlurTimeout = setTimeout(() => {
+      if (menuWindow && !menuWindow.isDestroyed()) {
+        menuWindow.hide();
+      }
+    }, 300);
+  });
+
+  menuWindow.on('focus', () => {
+    if (menuBlurTimeout) {
+      clearTimeout(menuBlurTimeout);
+      menuBlurTimeout = null;
     }
   });
 
@@ -211,23 +220,28 @@ function createEditorWindow() {
   });
 }
 
-// Open Features Menu Window right next to the active typing caret / cursor
+// Open Features Menu Window right next to active typing caret
 async function showMenuNearCaret() {
   if (!menuWindow || menuWindow.isDestroyed()) {
     createMenuWindow();
   }
 
   // Capture selection from current active window
-  const previousClipboard = clipboard.readText();
-  clipboard.writeText('');
-  await simulateKeyPress('^c');
-  await new Promise((r) => setTimeout(r, 100));
-  const selectedText = clipboard.readText();
-  if (!selectedText) {
-    clipboard.writeText(previousClipboard);
+  let selectedText = '';
+  try {
+    const previousClipboard = clipboard.readText();
+    clipboard.writeText('');
+    await simulateKeyPress('^c');
+    await new Promise((r) => setTimeout(r, 120));
+    selectedText = clipboard.readText();
+    if (!selectedText) {
+      clipboard.writeText(previousClipboard);
+    }
+  } catch (err) {
+    console.warn('Capture selection error:', err);
   }
 
-  const anchorPoint = lastCaretPos.x > 0 ? lastCaretPos : screen.getCursorScreenPoint();
+  const anchorPoint = (lastCaretPos && lastCaretPos.x > 0) ? lastCaretPos : screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(anchorPoint);
 
   const menuWidth = 360;
@@ -246,9 +260,14 @@ async function showMenuNearCaret() {
   }
 
   if (menuWindow && !menuWindow.isDestroyed()) {
+    if (menuBlurTimeout) {
+      clearTimeout(menuBlurTimeout);
+      menuBlurTimeout = null;
+    }
     menuWindow.setPosition(posX, posY);
     menuWindow.show();
     menuWindow.focus();
+    menuWindow.moveTop();
     menuWindow.webContents.send('menu-trigger', {
       selectedText: selectedText || '',
       x: posX,

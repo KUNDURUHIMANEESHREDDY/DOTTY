@@ -16,7 +16,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { QuickTemplatesModal } from './components/QuickTemplatesModal';
 import { StatsBar } from './components/StatsBar';
 import { ToastContainer } from './components/Toast';
-import { Sparkles, Edit3, X, Check, Copy, ArrowRight, Zap, RefreshCw } from 'lucide-react';
+import { Sparkles, Edit3, X, Check, Copy, ArrowRight, Zap } from 'lucide-react';
 
 const INITIAL_DEMO_TEXT = `# Welcome to Dotty ✦
 
@@ -92,6 +92,27 @@ export function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
+  // Immediate Click Capture for #dot route
+  useEffect(() => {
+    if (route === 'dot') {
+      const handleTrigger = (e: Event) => {
+        e.preventDefault();
+        e.stopPropagation();
+        window.electronAPI?.openMenuWindow();
+      };
+
+      window.addEventListener('click', handleTrigger, true);
+      window.addEventListener('mousedown', handleTrigger, true);
+      window.addEventListener('pointerdown', handleTrigger, true);
+
+      return () => {
+        window.removeEventListener('click', handleTrigger, true);
+        window.removeEventListener('mousedown', handleTrigger, true);
+        window.removeEventListener('pointerdown', handleTrigger, true);
+      };
+    }
+  }, [route]);
+
   // Listen for Menu Trigger data from main process in #menu mode
   useEffect(() => {
     if (window.electronAPI?.onMenuTrigger && route === 'menu') {
@@ -135,12 +156,12 @@ export function App() {
   };
 
   // =========================================================================
-  // ROUTE 1: #dot — FLOATING KEYBOARD CARET DOT BUBBLE
+  // ROUTE 1: #dot — FLOATING KEYBOARD CARET DOT BUBBLE (Instant Click)
   // =========================================================================
   if (route === 'dot') {
     return (
       <div
-        className="w-full h-full flex items-center justify-center bg-transparent select-none cursor-pointer"
+        className="w-full h-full flex items-center justify-center bg-transparent select-none cursor-pointer p-1"
         onMouseDown={(e) => {
           e.preventDefault();
           window.electronAPI?.openMenuWindow();
@@ -149,25 +170,25 @@ export function App() {
           e.preventDefault();
           window.electronAPI?.openMenuWindow();
         }}
-        title="Dotty AI Assistant (Alt+Space)"
+        title="Dotty AI Assistant (Click or Alt+Space)"
       >
-        <div className="relative group flex items-center justify-center">
-          {/* Subtle Outer Glow */}
+        <div className="relative group flex items-center justify-center pointer-events-auto">
+          {/* Subtle Outer Glow Ring */}
           <div
-            className="absolute -inset-1 rounded-full opacity-60 animate-ping"
+            className="absolute -inset-1 rounded-full opacity-70 animate-ping"
             style={{ backgroundColor: settings.dot.color || '#38bdf8' }}
           />
 
           {/* Main Interactive Bubble */}
           <div
-            className="relative w-8 h-8 rounded-full flex items-center justify-center shadow-2xl transition-all transform group-hover:scale-110 active:scale-95"
+            className="relative w-8 h-8 rounded-full flex items-center justify-center shadow-2xl transition-all transform group-hover:scale-110 active:scale-95 cursor-pointer"
             style={{
               backgroundColor: '#0f172a',
               border: `2px solid ${settings.dot.color || '#38bdf8'}`,
-              boxShadow: `0 0 16px 2px ${settings.dot.color || '#38bdf8'}aa`,
+              boxShadow: `0 0 18px 3px ${settings.dot.color || '#38bdf8'}aa`,
             }}
           >
-            <Sparkles className="w-4 h-4 text-sky-400 animate-pulse" />
+            <Sparkles className="w-4 h-4 text-sky-400 animate-pulse pointer-events-none" />
           </div>
         </div>
       </div>

@@ -23,7 +23,7 @@ let mainWindow: BrowserWindow | null = null;
 let trackerProcess: ChildProcess | null = null;
 let lastCaretPos = { x: 400, y: 300 };
 
-// 1. FLOATING KEYBOARD CARET DOT (48x48)
+// 1. FLOATING KEYBOARD CARET DOT (48x48 High-Visibility Bubble)
 function createDotWindow() {
   dotWindow = new BrowserWindow({
     width: 48,
@@ -35,7 +35,7 @@ function createDotWindow() {
     resizable: false,
     hasShadow: false,
     focusable: true,
-    show: false, // Initially hidden until typing is detected
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -59,7 +59,7 @@ function createDotWindow() {
   });
 }
 
-// 2. WHOLE MAIN APPLICATION WINDOW (1100x750 Standard Desktop Window with Tabs & AI)
+// 2. WHOLE MAIN APPLICATION WINDOW (1100x750 Standard Desktop Window)
 function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1100,
@@ -68,8 +68,8 @@ function createMainWindow() {
     minHeight: 550,
     backgroundColor: '#020617',
     title: 'Dotty — AI Typing Assistant & Editor',
-    frame: true, // Standard whole desktop window with title bar, minimize, maximize, close!
-    show: false, // Pre-created and ready to show instantly on click
+    frame: true,
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -125,7 +125,7 @@ function startCaretTracker() {
 
                 dotWindow.setPosition(targetX, targetY);
                 if (!dotWindow.isVisible()) {
-                  dotWindow.showInactive();
+                  dotWindow.show();
                 }
               }
             } else if (state === 'none') {
@@ -146,7 +146,7 @@ function startCaretTracker() {
   }
 }
 
-// Open Whole Main Window
+// Open Whole Main Window on Dot Click
 function openWholeWindow() {
   const selectedText = clipboard.readText() || '';
 
@@ -181,7 +181,7 @@ app.whenReady().then(() => {
   createMainWindow();
   startCaretTracker();
 
-  // Global Hotkey (Alt+Space or Ctrl+Shift+Space)
+  // Global Hotkeys
   try {
     globalShortcut.register('Alt+Space', () => {
       openWholeWindow();
